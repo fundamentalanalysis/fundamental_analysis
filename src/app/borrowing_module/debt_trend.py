@@ -82,5 +82,3 @@ def compute_trend_metrics(financials, yearly):
             else None
         ),
     }
-
-

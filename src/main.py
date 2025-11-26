@@ -7,6 +7,7 @@ import sys
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Optional
 
 # -------------------------------------------
 # FIX PATH
@@ -44,6 +45,14 @@ class FinancialYearInput(BaseModel):
     capex: float
     cwip: float
 
+    total_debt_maturing_lt_1y: Optional[float] = None
+    total_debt_maturing_1_3y: Optional[float] = None
+    total_debt_maturing_gt_3y: Optional[float] = None
+
+    weighted_avg_interest_rate: Optional[float] = None
+    floating_rate_debt: Optional[float] = None
+    fixed_rate_debt: Optional[float] = None
+
 
 class FinancialData(BaseModel):
 
@@ -51,17 +60,17 @@ class FinancialData(BaseModel):
 
     
     
-    total_debt_maturing_lt_1y: float
-    total_debt_maturing_1_3y: float
-    total_debt_maturing_gt_3y: float
+    # total_debt_maturing_lt_1y: float
+    # total_debt_maturing_1_3y: float
+    # total_debt_maturing_gt_3y: float
 
-    weighted_avg_interest_rate: float
-    floating_rate_debt: float
-    fixed_rate_debt: float
+    # weighted_avg_interest_rate: float
+    # floating_rate_debt: float
+    # fixed_rate_debt: float
 
 
 class AnalyzeRequest(BaseModel):
-    # year: int  # e.g. "Mar 2024"
+    #year: int  # e.g. "Mar 2024"
     company: str
     financial_data: FinancialData   # <-- EXACT INPUT YOU WANTED
 
@@ -101,23 +110,27 @@ def analyze(req: AnalyzeRequest):
                 finance_cost=fy.finance_cost,
                 capex=fy.capex,
                 cwip=fy.cwip,
+                total_debt_maturing_lt_1y=fy.total_debt_maturing_lt_1y,
+                total_debt_maturing_1_3y=fy.total_debt_maturing_1_3y,
+                total_debt_maturing_gt_3y=fy.total_debt_maturing_gt_3y,
+                weighted_avg_interest_rate=fy.weighted_avg_interest_rate,
+                floating_rate_debt=fy.floating_rate_debt,
+                fixed_rate_debt=fy.fixed_rate_debt,
             )
             yfis.append(yfi)
 
             
-        midd = {
+        # midd = {
 
-      
+        #     "total_debt_maturing_lt_1y" : fd.total_debt_maturing_lt_1y,
+        #     "total_debt_maturing_1_3y" : fd.total_debt_maturing_1_3y,
+        #     "total_debt_maturing_gt_3y" : fd.total_debt_maturing_gt_3y,
 
-            "total_debt_maturing_lt_1y" : fd.total_debt_maturing_lt_1y,
-            "total_debt_maturing_1_3y" : fd.total_debt_maturing_1_3y,
-            "total_debt_maturing_gt_3y" : fd.total_debt_maturing_gt_3y,
-
-            "weighted_avg_interest_rate" : fd.weighted_avg_interest_rate,
-            "floating_rate_debt" : fd.floating_rate_debt or 0,
-            "fixed_rate_debt" : fd.fixed_rate_debt,
+        #     "weighted_avg_interest_rate" : fd.weighted_avg_interest_rate,
+        #     "floating_rate_debt" : fd.floating_rate_debt or 0,
+        #     "fixed_rate_debt" : fd.fixed_rate_debt,
             
-        }        
+        # }        
         
         # fin = YearFinancialInput(
         #         # year=fd.year,
@@ -144,7 +157,6 @@ def analyze(req: AnalyzeRequest):
             company_id=company,
             industry_code="GENERAL",
             financials_5y=yfis,  # ONLY ONE YEAR USED
-            midd = midd,
             industry_benchmarks=IndustryBenchmarks(
                 target_de_ratio=1.5,
                 max_safe_de_ratio=2.5,

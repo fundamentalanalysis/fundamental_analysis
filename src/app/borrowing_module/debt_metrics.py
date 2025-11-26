@@ -11,7 +11,7 @@ def safe_div(a, b):
     return a / b if (b not in (0, None) and a is not None) else None
 
 
-def compute_per_year_metrics(financials_5y, midd) -> Dict[int, dict]:
+def compute_per_year_metrics(financials_5y) -> Dict[int, dict]:
     """
     Input:  List[YearFinancialInput]
     Output: Dict of metrics per year
@@ -55,7 +55,7 @@ def compute_per_year_metrics(financials_5y, midd) -> Dict[int, dict]:
         # These are only valid/provided for the most recent snapshot
         if f.year == latest_year:
             # Handle Floating Rate: Input might be ratio (0.60) or amount
-            float_input = midd.get('floating_rate_debt', 0)
+            float_input = f.floating_rate_debt or 0
             if float_input <= 1 and float_input > 0:
                 # It's likely a ratio already (e.g. 0.60)
                 m["floating_share"] = float_input
@@ -63,12 +63,13 @@ def compute_per_year_metrics(financials_5y, midd) -> Dict[int, dict]:
                 # It's an amount, calculate share
                 m["floating_share"] = safe_div(float_input, total_debt)
 
-            m["wacd"] = midd.get('weighted_avg_interest_rate')
+            m["wacd"] = f.weighted_avg_interest_rate
             
             # Maturity Profile
-            m["maturity_lt_1y_pct"] = safe_div(midd.get('total_debt_maturing_lt_1y'), total_debt)
-            m["maturity_1_3y_pct"] = safe_div(midd.get('total_debt_maturing_1_3y'), total_debt)
-            m["maturity_gt_3y_pct"] = safe_div(midd.get('total_debt_maturing_gt_3y'), total_debt)
+            m["maturity_lt_1y_pct"] = safe_div(f.total_debt_maturing_lt_1y, total_debt)
+            print(f.total_debt_maturing_lt_1y)
+            m["maturity_1_3y_pct"] = safe_div(f.total_debt_maturing_lt_1y, total_debt)
+            m["maturity_gt_3y_pct"] = safe_div(f.total_debt_maturing_lt_1y, total_debt)
         else:
             # Historical years don't have this granular data in the current input model
             m["floating_share"] = None
@@ -76,9 +77,41 @@ def compute_per_year_metrics(financials_5y, midd) -> Dict[int, dict]:
             m["maturity_lt_1y_pct"] = None
             m["maturity_1_3y_pct"] = None
             m["maturity_gt_3y_pct"] = None
-
+    
         metrics[f.year] = m
 
     return metrics
+def compute_yoy_percentage(metrics_by_year: Dict[int, dict]) -> Dict[str, dict]:
+    """
+    Converts absolute per-year metrics into YoY % growth for every metric.
+    Output will have years in descending order: latest → oldest
+    """
+    yoy_output = {}
 
+    # Sort years ascending to calculate YoY properly
+    years = sorted(metrics_by_year.keys())
 
+    # All metric keys except 'year'
+    metric_keys = [k for k in metrics_by_year[years[0]].keys() if k != "year"]
+
+    for metric in metric_keys:
+        temp_dict = {}
+        for i, year in enumerate(years):
+            label = f"Mar {year}"
+            if i == 0:
+                temp_dict[label] = None  # First year has no previous year
+            else:
+                prev_year = years[i - 1]
+                curr_val = metrics_by_year[year][metric]
+                prev_val = metrics_by_year[prev_year][metric]
+
+                if curr_val is None or prev_val in (None, 0):
+                    temp_dict[label] = None
+                else:
+                    pct_change = ((curr_val - prev_val) / prev_val) * 100
+                    temp_dict[label] = f"{round(pct_change)}%"
+
+        # Reverse temp_dict to get descending years
+        yoy_output[metric] = dict(sorted(temp_dict.items(), reverse=True))
+
+    return yoy_output

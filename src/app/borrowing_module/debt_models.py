@@ -17,13 +17,13 @@ class YearFinancialInput(BaseModel):
     cwip: float = 0
     revenue: float = 0
 
-    # total_debt_maturing_lt_1y: Optional[float] = None
-    # total_debt_maturing_1_3y: Optional[float] = None
-    # total_debt_maturing_gt_3y: Optional[float] = None
+    total_debt_maturing_lt_1y: Optional[float] = None
+    total_debt_maturing_1_3y: Optional[float] = None
+    total_debt_maturing_gt_3y: Optional[float] = None
 
-    # weighted_avg_interest_rate: Optional[float] = None
-    # floating_rate_debt: Optional[float] = None
-    # fixed_rate_debt: Optional[float] = None
+    weighted_avg_interest_rate: Optional[float] = None
+    floating_rate_debt: Optional[float] = None
+    fixed_rate_debt: Optional[float] = None
 
 
 
@@ -46,7 +46,7 @@ class BorrowingsInput(BaseModel):
     financials_5y: List[YearFinancialInput]
     industry_benchmarks: IndustryBenchmarks
     covenant_limits: CovenantLimits
-    midd: Optional[dict] = None
+    # midd: Optional[dict] = None
 
 
 class RuleResult(BaseModel):

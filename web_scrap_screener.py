@@ -621,7 +621,7 @@ def scrape_screener_company(symbol):
         time.sleep(2)
 
         # Extract concall notes (modal pop-up)
-        # extract_concall_notes(driver, company_folder)
+        extract_concall_notes(driver, company_folder)
 
         # Freeze the final rendered page
         soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -850,84 +850,84 @@ def scrape_screener_company(symbol):
             'other': 0
         }
 
-        # # Extract links from Documents section
-        # doc_links = extract_documents_links(soup, url)
-        # print(f"  Found {len(doc_links)} document links")
+        # Extract links from Documents section
+        doc_links = extract_documents_links(soup, url)
+        print(f"  Found {len(doc_links)} document links")
 
-        # # Extract concalls
-        # concall_links = extract_concalls_comprehensive(driver, soup, url)
-        # print(f"  Found {len(concall_links)} concall links")
+        # Extract concalls
+        concall_links = extract_concalls_comprehensive(driver, soup, url)
+        print(f"  Found {len(concall_links)} concall links")
 
-        # # Extract quarterly PDFs
-        # quarterly_pdfs = extract_quarterly_result_pdfs(soup, url)
-        # print(f"  Found {len(quarterly_pdfs)} quarterly result PDFs")
+        # Extract quarterly PDFs
+        quarterly_pdfs = extract_quarterly_result_pdfs(soup, url)
+        print(f"  Found {len(quarterly_pdfs)} quarterly result PDFs")
 
-        # # Combine all
-        # all_doc_links = doc_links + concall_links + quarterly_pdfs
+        # Combine all
+        all_doc_links = doc_links + concall_links + quarterly_pdfs
 
-        # # ------------------------------------------------------
-        # #    DOWNLOAD EACH DOCUMENT
-        # # ------------------------------------------------------
-        # for item in all_doc_links:
-        #     category = item['category']
-        #     text = item['text'] or ''
-        #     full_url = item['url']
-        #     force_pdf = item.get('force_pdf', False)
+        # ------------------------------------------------------
+        #    DOWNLOAD EACH DOCUMENT
+        # ------------------------------------------------------
+        for item in all_doc_links:
+            category = item['category']
+            text = item['text'] or ''
+            full_url = item['url']
+            force_pdf = item.get('force_pdf', False)
 
-        #     # Clean filename
-        #     filename = clean_filename(text)
+            # Clean filename
+            filename = clean_filename(text)
 
-        #     # FIX STARTS HERE  ***********************************************
-        #     if category not in folders:
-        #         folder_key = 'other'
-        #     else:
-        #         folder_key = category
+            # FIX STARTS HERE  ***********************************************
+            if category not in folders:
+                folder_key = 'other'
+            else:
+                folder_key = category
 
-        #     if category not in download_stats:
-        #         category = 'other'
-        #     # FIX ENDS HERE  *************************************************
+            if category not in download_stats:
+                category = 'other'
+            # FIX ENDS HERE  *************************************************
 
-        #     # Determine correct extension
-        #     ext_src = os.path.splitext(urlparse(full_url).path)[1].lower()
+            # Determine correct extension
+            ext_src = os.path.splitext(urlparse(full_url).path)[1].lower()
 
-        #     if force_pdf:
-        #         ext = ".pdf"
-        #     else:
-        #         if ext_src in ['.pdf']:
-        #             ext = ".pdf"
-        #         elif ext_src in ['.htm', '.html']:
-        #             ext = ".html"
-        #         else:
-        #             ext = ".html"
+            if force_pdf:
+                ext = ".pdf"
+            else:
+                if ext_src in ['.pdf']:
+                    ext = ".pdf"
+                elif ext_src in ['.htm', '.html']:
+                    ext = ".html"
+                else:
+                    ext = ".html"
 
-        #     filename = filename + ext
-        #     save_path = folders[folder_key] / filename
+            filename = filename + ext
+            save_path = folders[folder_key] / filename
 
-        #     if save_path.exists():
-        #         continue
+            if save_path.exists():
+                continue
 
-        #     print(f"  Downloading [{category}]: {filename}")
-        #     print(f"     URL: {full_url}")
+            print(f"  Downloading [{category}]: {filename}")
+            print(f"     URL: {full_url}")
 
-        #     ok = download_file(full_url, save_path)
-        #     if ok:
-        #         download_stats[category] += 1
-        #     else:
-        #         print("     ✗ Failed")
+            ok = download_file(full_url, save_path)
+            if ok:
+                download_stats[category] += 1
+            else:
+                print("     ✗ Failed")
 
 
-        # # ------------------------------------------------------
-        # #               DOCUMENTS SUMMARY
-        # # ------------------------------------------------------
-        # print("\n" + "="*70)
-        # print("Documents downloaded:")
-        # print(f"  Annual Reports:           {download_stats['annual']}")
-        # print(f"  Concalls:                 {download_stats['concalls']}")
-        # print(f"  Announcements:            {download_stats['announcements']}")
-        # print(f"  Credit Ratings:           {download_stats['credit_ratings']}")
-        # print(f"  Quarterly Result PDFs:    {download_stats['quarterly_results']}")
-        # print(f"  Other:                    {download_stats['other']}")
-        # print("="*70 + "\n")
+        # ------------------------------------------------------
+        #               DOCUMENTS SUMMARY
+        # ------------------------------------------------------
+        print("\n" + "="*70)
+        print("Documents downloaded:")
+        print(f"  Annual Reports:           {download_stats['annual']}")
+        print(f"  Concalls:                 {download_stats['concalls']}")
+        print(f"  Announcements:            {download_stats['announcements']}")
+        print(f"  Credit Ratings:           {download_stats['credit_ratings']}")
+        print(f"  Quarterly Result PDFs:    {download_stats['quarterly_results']}")
+        print(f"  Other:                    {download_stats['other']}")
+        print("="*70 + "\n")
 
         # ------------------------------------------------------
         #                       SUMMARY CSV
@@ -940,12 +940,12 @@ def scrape_screener_company(symbol):
             'Login Successful': 'Yes' if login_success else 'No',
             'Paywall Detected': 'Yes' if paywall_detected else 'No',
             'Financial Tables Extracted': len(tables_saved),
-            # 'Annual Reports': download_stats['annual'],
-            # 'Concalls': download_stats['concalls'],
-            # 'Announcements': download_stats['announcements'],
-            # 'Credit Ratings': download_stats['credit_ratings'],
-            # 'Quarterly Result PDFs': download_stats['quarterly_results'],
-            # 'Other Documents': download_stats['other']
+            'Annual Reports': download_stats['annual'],
+            'Concalls': download_stats['concalls'],
+            'Announcements': download_stats['announcements'],
+            'Credit Ratings': download_stats['credit_ratings'],
+            'Quarterly Result PDFs': download_stats['quarterly_results'],
+            'Other Documents': download_stats['other']
         }
 
         pd.DataFrame([summary]).to_csv(company_folder / "summary.csv", index=False)
