@@ -2,7 +2,7 @@
 # src/app/borrowing_module/debt_llm.py
 
 
-from src.app.config import OPENAI_API_KEY, OPENAI_MODEL
+from src.app.config import  OPENAI_MODEL
 from src.app.config import get_llm_client
 
 client = get_llm_client()
