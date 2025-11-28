@@ -1,388 +1,15 @@
+from typing import List, Dict
 
-# # ==============================================================
-# # debt_rules.py
-# # Deterministic rule engine for Borrowings Module
-# # ==============================================================
-
-
-# # src/app/borrowing_module/debt_rules.py
-
-# from src.app.borrowing_module.debt_models import RuleResult
+from .borrowings_config import BorrowingsRuleConfig, BorrowingsRuleThresholds
+from .debt_models import RuleResult, IndustryBenchmarks, CovenantLimits
 
 
-# def make(flag, rule_id, name, value, threshold, reason):
-#     return RuleResult(
-#         rule_id=rule_id,
-#         rule_name=name,
-#         flag=flag,
-#         value=value,
-#         threshold=threshold,
-#         reason=reason,
-#     )
-
-
-# def apply_rules(financials, metrics, trends):
-#     results = []
-
-#     # Work with latest year snapshot
-#     last_year = max(metrics.keys())
-#     m = metrics[last_year]
-
-#     # ------------------------------------------------------------
-#     # A. DEBT GROWTH & TREND RULES
-#     # ------------------------------------------------------------
-
-#     # A1 – Rising Debt Faster Than EBITDA
-#     debt_cagr = trends.get("debt_cagr")
-#     ebitda_cagr = trends.get("ebitda_cagr")
-#     if debt_cagr is not None and ebitda_cagr is not None:
-#         if debt_cagr > ebitda_cagr:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "A1",
-#                     "Debt CAGR > EBITDA CAGR",
-#                     debt_cagr,
-#                     f">{ebitda_cagr:.2f}",
-#                     (
-#                         "Leverage increasing faster than earnings "
-#                         f"(Debt CAGR: {debt_cagr:.2f}%, EBITDA CAGR: {ebitda_cagr:.2f}%)"
-#                     ),
-#                 )
-#             )
-
-#     # A2 – ST Debt Surge Signal
-#     st_debt_growth = trends.get("st_debt_yoy_growth", [])
-#     if len(st_debt_growth) >= 2:
-#         last_two = st_debt_growth[-2:]
-#         if all(g > 30 for g in last_two):
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "A2",
-#                     "ST Debt Surge",
-#                     last_two[-1],
-#                     ">30% YoY for 2y",
-#                     (
-#                         "Short-term rollover risk "
-#                         f"(Last 2 years ST debt YoY: {last_two[0]:.1f}%, {last_two[1]:.1f}%)"
-#                     ),
-#                 )
-#             )
-
-#     # A3 – LT Debt Increasing but Revenue Flat
-#     lt_debt_cagr = trends.get("lt_debt_cagr")
-#     revenue_cagr = trends.get("revenue_cagr")
-#     if lt_debt_cagr is not None and revenue_cagr is not None:
-#         if lt_debt_cagr > 10 and revenue_cagr < 5:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "A3",
-#                     "LT Debt Up, Revenue Flat",
-#                     lt_debt_cagr,
-#                     ">10% LT Debt CAGR & <5% Revenue CAGR",
-#                     (
-#                         "Possible distress borrowing "
-#                         f"(LT Debt CAGR: {lt_debt_cagr:.2f}%, Revenue CAGR: {revenue_cagr:.2f}%)"
-#                     ),
-#                 )
-#             )
-
-#     # A3b – LT Debt grows & CWIP/Total_Assets > 10% (Green capex story)
-#     cwip = m.get("cwip", 0) or 0
-#     print(f'lt_debt_cagr: {lt_debt_cagr}, cwip: {cwip}')
-#     total_assets = m.get("total_assets", 0) or 0
-#     if lt_debt_cagr is not None and lt_debt_cagr > 0 and total_assets > 0:
-#         cwip_ratio = cwip / total_assets
-#         if cwip_ratio > 0.10:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "A3b",
-#                     "LT Debt + Capex",
-#                     cwip_ratio,
-#                     ">10%",
-#                     f"Debt funding growth capex (CWIP/Total Assets: {cwip_ratio:.2%})",
-#                 )
-#             )
-
-#     # ------------------------------------------------------------
-#     # B. LEVERAGE RATIOS
-#     # ------------------------------------------------------------
-
-#     # B1 – Debt-to-Equity Threshold
-#     de = m.get("de_ratio")
-#     if de is not None:
-#         if de > 1:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "B1",
-#                     "Debt-to-Equity",
-#                     de,
-#                     ">1",
-#                     "Highly leveraged",
-#                 )
-#             )
-#         elif de > 0.5:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "B1",
-#                     "Debt-to-Equity",
-#                     de,
-#                     "0.5–1",
-#                     "Moderately leveraged",
-#                 )
-#             )
-#         else:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "B1",
-#                     "Debt-to-Equity",
-#                     de,
-#                     "<=0.5",
-#                     "Healthy leverage",
-#                 )
-#             )
-
-#     # B2 – Debt-to-EBITDA Threshold
-#     debt_ebitda = m.get("debt_ebitda")
-#     if debt_ebitda is not None:
-#         if debt_ebitda > 4:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "B2",
-#                     "Debt-to-EBITDA",
-#                     debt_ebitda,
-#                     ">4",
-#                     "Very high leverage",
-#                 )
-#             )
-#         elif debt_ebitda > 2:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "B2",
-#                     "Debt-to-EBITDA",
-#                     debt_ebitda,
-#                     "2–4",
-#                     "Slightly stressed",
-#                 )
-#             )
-#         else:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "B2",
-#                     "Debt-to-EBITDA",
-#                     debt_ebitda,
-#                     "<=2",
-#                     "Healthy",
-#                 )
-#             )
-
-#     # ------------------------------------------------------------
-#     # C. INTEREST COVERAGE RULES
-#     # ------------------------------------------------------------
-
-#     # C1 – ICR Threshold
-#     icr = m.get("interest_coverage")
-#     if icr is not None:
-#         if icr < 1.5:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "C1",
-#                     "Interest Coverage",
-#                     icr,
-#                     "<1.5",
-#                     "Unable to service interest",
-#                 )
-#             )
-#         elif icr < 3:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "C1",
-#                     "Interest Coverage",
-#                     icr,
-#                     "1.5–3",
-#                     "Tight servicing ability",
-#                 )
-#             )
-#         else:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "C1",
-#                     "Interest Coverage",
-#                     icr,
-#                     ">=3",
-#                     "Comfortable",
-#                 )
-#             )
-
-#     # C2 – Finance Cost Rising Faster Than Debt
-#     finance_cost_cagr = trends.get("finance_cost_cagr")
-#     print(f'finance_cost_cagr: {finance_cost_cagr}, debt_cagr: {debt_cagr}')
-#     if finance_cost_cagr is not None and debt_cagr is not None:
-#         if (finance_cost_cagr - debt_cagr) > 5:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "C2",
-#                     "Finance Cost > Debt Growth",
-#                     finance_cost_cagr,
-#                     f">{debt_cagr + 5:.2f}",
-#                     (
-#                         "Interest rate increase pressure "
-#                         f"(Finance Cost CAGR: {finance_cost_cagr:.2f}%, Debt CAGR: {debt_cagr:.2f}%)"
-#                     ),
-#                 )
-#             )
-
-#     # ------------------------------------------------------------
-#     # D. MATURITY PROFILE RULES
-#     # ------------------------------------------------------------
-
-#     # D1 – Refinancing Risk
-#     refinancing_ratio = m.get("maturity_lt_1y_pct")
-#     print('refinancing_ratio', refinancing_ratio)
-#     if refinancing_ratio is not None:
-#         if refinancing_ratio > 0.5:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "D1",
-#                     "Refinancing Risk",
-#                     refinancing_ratio,
-#                     ">50% due <1yr",
-#                     f"High refinancing risk ({refinancing_ratio:.2%} of debt matures <1yr)",
-#                 )
-#             )
-
-#     # D2 – Balanced Maturity
-#     ratio_1_3y = m.get("maturity_1_3y_pct")
-#     ratio_gt_3y = m.get("maturity_gt_3y_pct")
-#     print('ratio_1_3y', ratio_1_3y)
-#     print('ratio_gt_3y', ratio_gt_3y)
-#     if ratio_1_3y is not None and ratio_gt_3y is not None:
-#         if ratio_1_3y >= 0.3 and ratio_gt_3y >= 0.2:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "D2",
-#                     "Balanced Maturity",
-#                     ratio_1_3y,
-#                     ">=30% 1-3y & >=20% >3y",
-#                     (
-#                         "Good maturity spread "
-#                         f"(1-3y: {ratio_1_3y:.2%}, >3y: {ratio_gt_3y:.2%})"
-#                     ),
-#                 )
-#             )
-
-#     # ------------------------------------------------------------
-#     # E. INTEREST COST RISK (FLOATING VS FIXED)
-#     # ------------------------------------------------------------
-
-#     floating_pct = m.get("floating_share")
-#     print('floating_pct', floating_pct)
-#     if floating_pct is not None:
-#         if floating_pct > 0.6:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "E1",
-#                     "Floating-Rate Exposure",
-#                     floating_pct,
-#                     ">60%",
-#                     f"High rate sensitivity ({floating_pct:.2%} floating rate debt)",
-#                 )
-#             )
-#         elif floating_pct > 0.4:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "E1",
-#                     "Floating-Rate Exposure",
-#                     floating_pct,
-#                     "40–60%",
-#                     f"Moderate risk ({floating_pct:.2%} floating rate debt)",
-#                 )
-#             )
-#         else:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "E1",
-#                     "Floating-Rate Exposure",
-#                     floating_pct,
-#                     "<=40%",
-#                     f"Stable interest profile ({floating_pct:.2%} floating rate debt)",
-#                 )
-#             )
-
-#     # ------------------------------------------------------------
-#     # F. WEIGHTED AVERAGE COST OF DEBT (WACD)
-#     # ------------------------------------------------------------
-
-#     wacd = m.get("wacd")
-#     print('wacd', wacd)
-#     if wacd is not None:
-#         if wacd > 0.10:
-#             results.append(
-#                 make(
-#                     "RED",
-#                     "F1",
-#                     "WACD",
-#                     wacd,
-#                     ">10%",
-#                     "Very high cost of borrowing",
-#                 )
-#             )
-#         elif wacd > 0.07:
-#             results.append(
-#                 make(
-#                     "YELLOW",
-#                     "F1",
-#                     "WACD",
-#                     wacd,
-#                     "7–10%",
-#                     "Somewhat expensive",
-#                 )
-#             )
-#         else:
-#             results.append(
-#                 make(
-#                     "GREEN",
-#                     "F1",
-#                     "WACD",
-#                     wacd,
-#                     "<=7%",
-#                     "Good borrowing rate",
-#                 )
-#             )
-
-#     return results
-
-
-# ==============================================================
-# debt_rules.py
-# Deterministic rule engine for Borrowings Module
-# ==============================================================
-
-from src.app.borrowing_module.debt_models import RuleResult
-
-
-def make(flag, rule_id, name, value, threshold, reason):
+def _make(rule_id, name, metric, year, flag, value, threshold, reason):
     return RuleResult(
         rule_id=rule_id,
         rule_name=name,
+        metric=metric,
+        year=year,
         flag=flag,
         value=value,
         threshold=threshold,
@@ -390,158 +17,445 @@ def make(flag, rule_id, name, value, threshold, reason):
     )
 
 
-def default_green(rule_id, name, value, threshold, reason="Healthy"):
-    return make("GREEN", rule_id, name, value, threshold, reason)
+def _latest_year(metrics: Dict[int, dict]) -> int:
+    return max(metrics.keys())
 
 
-def apply_rules(financials, metrics, trends):
-    results = []
-
-    last_year = max(metrics.keys())
+def apply_rules(
+    metrics: Dict[int, dict],
+    trends: Dict[str, any],
+    benchmarks: IndustryBenchmarks,
+    covenants: CovenantLimits,
+    rule_config: BorrowingsRuleConfig,
+) -> List[RuleResult]:
+    last_year = _latest_year(metrics)
     m = metrics[last_year]
+    cfg: BorrowingsRuleThresholds = rule_config.generic
+    results: List[RuleResult] = []
 
-    # ----------------------------------------------------------------------
-    # A. DEBT GROWTH & TREND RULES
-    # ----------------------------------------------------------------------
+    debt_cagr = trends.get("debt_cagr")
+    ebitda_cagr = trends.get("ebitda_cagr")
 
-    # A1 Rising Debt Faster Than EBITDA
-    debt_cagr = trends.get("debt_cagr", 0)
-    ebitda_cagr = trends.get("ebitda_cagr", 0)
+    # A1 – Debt growing faster than EBITDA
+    if debt_cagr is not None and ebitda_cagr is not None:
+        gap = cfg.high_debt_cagr_vs_ebitda_gap or 0
+        if debt_cagr > ebitda_cagr + gap:
+            results.append(
+                _make(
+                    "A1",
+                    "Debt CAGR vs EBITDA",
+                    "debt_cagr",
+                    last_year,
+                    "RED",
+                    debt_cagr,
+                    f">{ebitda_cagr + gap:.2f}",
+                    f"Debt CAGR {debt_cagr:.2f}% exceeds EBITDA CAGR {ebitda_cagr:.2f}% by more than {gap*100:.0f}bps.",
+                )
+            )
 
-    if debt_cagr > ebitda_cagr:
-        results.append(make(
-            "RED", "A1", "Debt CAGR > EBITDA CAGR",
-            debt_cagr, f">{ebitda_cagr:.2f}",
-            f"Leverage increasing faster than earnings"
-        ))
-    else:
-        results.append(default_green(
-            "A1", "Debt CAGR > EBITDA CAGR",
-            debt_cagr, f"<={ebitda_cagr:.2f}"
-        ))
-
-    # A2 ST Debt Surge Signal
+    # A2 – ST debt surge with weak OCF
     st_debt_growth = trends.get("st_debt_yoy_growth", [])
-    if len(st_debt_growth) >= 2 and all(g > 30 for g in st_debt_growth[-2:]):
-        results.append(make(
-            "RED", "A2", "ST Debt Surge",
-            st_debt_growth[-1], ">30% for 2 yrs",
-            "Short-term rollover risk"
-        ))
-    else:
-        val = st_debt_growth[-1] if st_debt_growth else 0
-        results.append(default_green("A2", "ST Debt Surge", val, "<=30%"))
+    ocf_growth = trends.get("ocf_yoy_growth", [])
+    if (
+        len(st_debt_growth) >= 2
+        and st_debt_growth[-2] is not None
+        and st_debt_growth[-1] is not None
+        and st_debt_growth[-2] > 30
+        and st_debt_growth[-1] > 30
+    ):
+        ocf_condition = not ocf_growth or (ocf_growth and (ocf_growth[-1] is None or ocf_growth[-1] <= 0))
+        if ocf_condition:
+            results.append(
+                _make(
+                    "A2",
+                    "ST Debt Surge",
+                    "short_term_debt",
+                    last_year,
+                    "RED",
+                    st_debt_growth[-1],
+                    ">30% YoY for 2 years",
+                    "Short-term borrowings growing >30% YoY for two consecutive years while operating cash flow is flat/declining.",
+                )
+            )
 
-    # A3 LT Debt Up, Revenue Flat
-    lt_debt_cagr = trends.get("lt_debt_cagr", 0)
-    revenue_cagr = trends.get("revenue_cagr", 0)
+    # A3 – LT debt growth vs revenue
+    lt_debt_cagr = trends.get("lt_debt_cagr")
+    revenue_cagr = trends.get("revenue_cagr")
+    if lt_debt_cagr is not None and revenue_cagr is not None and lt_debt_cagr > 10 and revenue_cagr < 5:
+        results.append(
+            _make(
+                "A3",
+                "LT Debt vs Revenue",
+                "long_term_debt",
+                last_year,
+                "YELLOW",
+                lt_debt_cagr,
+                ">10% LT debt CAGR & <5% revenue CAGR",
+                "Long-term debt growing faster than revenue, indicating potential distress borrowing.",
+            )
+        )
 
-    if lt_debt_cagr > 10 and revenue_cagr < 5:
-        results.append(make(
-            "YELLOW", "A3", "LT Debt Up, Revenue Flat",
-            lt_debt_cagr, ">10% LT debt & <5% revenue",
-            "Possible distress borrowing"
-        ))
-    else:
-        results.append(default_green("A3", "LT Debt Up, Revenue Flat", lt_debt_cagr, "<=10%"))
+    cwip_ratio = (m.get("cwip") or 0) / (m.get("total_assets") or 1)
+    if lt_debt_cagr and lt_debt_cagr > 0 and cwip_ratio >= 0.10:
+        results.append(
+            _make(
+                "A3b",
+                "LT Debt funding CWIP",
+                "cwip",
+                last_year,
+                "GREEN",
+                cwip_ratio,
+                ">=10%",
+                "Meaningful portion of LT debt appears to fund CWIP / growth capex.",
+            )
+        )
 
-    # A3b LT Debt + Capex story
-    cwip = m.get("cwip", 0)
-    total_assets = m.get("total_assets", 1)
-    cwip_ratio = cwip / total_assets if total_assets else 0
+    # B1 – Debt-to-Equity
+    de = m.get("de_ratio")
+    yellow_limit = max(benchmarks.target_de_ratio, cfg.high_de_ratio)
+    red_limit = max(benchmarks.max_safe_de_ratio, cfg.very_high_de_ratio)
+    if de is not None:
+        if de > red_limit:
+            results.append(
+                _make(
+                    "B1",
+                    "Debt-to-Equity",
+                    "de_ratio",
+                    last_year,
+                    "RED",
+                    de,
+                    f">{red_limit}",
+                    "Very high leverage relative to equity base.",
+                )
+            )
+        elif de > yellow_limit:
+            results.append(
+                _make(
+                    "B1",
+                    "Debt-to-Equity",
+                    "de_ratio",
+                    last_year,
+                    "YELLOW",
+                    de,
+                    f"{yellow_limit}-{red_limit}",
+                    "High leverage compared to equity.",
+                )
+            )
 
-    if lt_debt_cagr > 0 and cwip_ratio > 0.10:
-        results.append(make(
-            "GREEN", "A3b", "LT Debt + Capex",
-            cwip_ratio, ">10%",
-            "Debt funding growth capex"
-        ))
-    else:
-        results.append(default_green("A3b", "LT Debt + Capex", cwip_ratio, "<=10%"))
+    # B2 – Debt-to-EBITDA
+    debt_ebitda = m.get("debt_ebitda")
+    yellow_debt_ebitda = max(benchmarks.max_safe_debt_ebitda, cfg.high_debt_ebitda)
+    red_debt_ebitda = max(cfg.critical_debt_ebitda, yellow_debt_ebitda + 2)
+    if debt_ebitda is not None:
+        if debt_ebitda > red_debt_ebitda:
+            results.append(
+                _make(
+                    "B2",
+                    "Debt-to-EBITDA",
+                    "debt_ebitda",
+                    last_year,
+                    "RED",
+                    debt_ebitda,
+                    f">{red_debt_ebitda}",
+                    "Very high leverage relative to EBITDA.",
+                )
+            )
+        elif debt_ebitda > yellow_debt_ebitda:
+            results.append(
+                _make(
+                    "B2",
+                    "Debt-to-EBITDA",
+                    "debt_ebitda",
+                    last_year,
+                    "YELLOW",
+                    debt_ebitda,
+                    f"{yellow_debt_ebitda}-{red_debt_ebitda}",
+                    "Leverage above comfortable levels.",
+                )
+            )
 
-    # ----------------------------------------------------------------------
-    # B. LEVERAGE RATIOS
-    # ----------------------------------------------------------------------
+    # C1 – ICR thresholds
+    icr = m.get("interest_coverage")
+    if icr is not None:
+        if icr < cfg.critical_icr:
+            results.append(
+                _make(
+                    "C1",
+                    "Interest Coverage",
+                    "interest_coverage",
+                    last_year,
+                    "RED",
+                    icr,
+                    f"<{cfg.critical_icr}",
+                    "EBIT does not cover finance cost; default risk elevated.",
+                )
+            )
+        elif icr < max(cfg.low_icr, benchmarks.min_safe_icr):
+            results.append(
+                _make(
+                    "C1",
+                    "Interest Coverage",
+                    "interest_coverage",
+                    last_year,
+                    "YELLOW",
+                    icr,
+                    f"{cfg.critical_icr}-{cfg.low_icr}",
+                    "Tight interest servicing ability.",
+                )
+            )
 
-    # B1 Debt-to-Equity
-    de = m.get("de_ratio", 0)
-    if de > 1:
-        results.append(make("RED", "B1", "Debt-to-Equity", de, ">1", "Highly leveraged"))
-    elif de > 0.5:
-        results.append(make("YELLOW", "B1", "Debt-to-Equity", de, "0.5–1", "Moderately leveraged"))
-    else:
-        results.append(default_green("B1", "Debt-to-Equity", de, "<=0.5"))
+    # C2 – Finance cost rising faster than debt
+    if debt_cagr is not None:
+        finance_cost_cagr = trends.get("finance_cost_cagr")
+        if finance_cost_cagr is not None and finance_cost_cagr > debt_cagr + 5:
+            results.append(
+                _make(
+                    "C2",
+                    "Finance Cost Pressure",
+                    "finance_cost",
+                    last_year,
+                    "YELLOW",
+                    finance_cost_cagr,
+                    f">{debt_cagr + 5:.2f}",
+                    "Finance cost growing faster than debt, indicating rate pressure.",
+                )
+            )
 
-    # B2 Debt-to-EBITDA
-    debt_ebitda = m.get("debt_ebitda", 0)
-    if debt_ebitda > 4:
-        results.append(make("RED", "B2", "Debt-to-EBITDA", debt_ebitda, ">4", "Very high leverage"))
-    elif debt_ebitda > 2:
-        results.append(make("YELLOW", "B2", "Debt-to-EBITDA", debt_ebitda, "2–4", "Slightly stressed"))
-    else:
-        results.append(default_green("B2", "Debt-to-EBITDA", debt_ebitda, "<=2"))
+    fincost_yoy = trends.get("finance_cost_yoy_growth", [])
+    if len(fincost_yoy) >= 2:
+        if fincost_yoy[-1] and fincost_yoy[-2]:
+            if fincost_yoy[-1] > cfg.high_fin_cost_yoy * 100 and fincost_yoy[-2] > cfg.high_fin_cost_yoy * 100:
+                results.append(
+                    _make(
+                        "C2b",
+                        "Finance Cost YoY",
+                        "finance_cost",
+                        last_year,
+                        "YELLOW",
+                        fincost_yoy[-1],
+                        f"> {cfg.high_fin_cost_yoy*100:.0f}% YoY for 2 years",
+                        "Finance cost rising >25% YoY for two years.",
+                    )
+                )
 
-    # ----------------------------------------------------------------------
-    # C. INTEREST COVERAGE RULES
-    # ----------------------------------------------------------------------
+    # D1 – Refinancing risk (<1y maturity)
+    maturity_lt = m.get("maturity_lt_1y_pct")
+    if maturity_lt is not None and maturity_lt > cfg.risky_debt_lt_1y_pct:
+        results.append(
+            _make(
+                "D1",
+                "Refinancing Risk",
+                "maturity_lt_1y_pct",
+                last_year,
+                "RED",
+                maturity_lt,
+                f">{cfg.risky_debt_lt_1y_pct}",
+                "More than half of debt matures within one year.",
+            )
+        )
 
-    icr = m.get("interest_coverage", 0)
-    if icr < 1.5:
-        results.append(make("RED", "C1", "Interest Coverage", icr, "<1.5", "Unable to service interest"))
-    elif icr < 3:
-        results.append(make("YELLOW", "C1", "Interest Coverage", icr, "1.5–3", "Tight servicing ability"))
-    else:
-        results.append(default_green("C1", "Interest Coverage", icr, ">=3", "Comfortable"))
+    # D2 – Balanced maturity
+    maturity_mid = m.get("maturity_1_3y_pct")
+    maturity_long = m.get("maturity_gt_3y_pct")
+    if (
+        maturity_mid is not None
+        and maturity_long is not None
+        and maturity_mid >= 0.30
+        and maturity_long >= 0.20
+    ):
+        results.append(
+            _make(
+                "D2",
+                "Balanced Maturity",
+                "maturity_profile",
+                last_year,
+                "GREEN",
+                maturity_mid,
+                ">=30% (1-3y) & >=20% (>3y)",
+                "Debt maturity is well spread across 1-3 years and >3 years.",
+            )
+        )
 
-    # C2 Finance Cost Rising Faster Than Debt
-    finance_cost_cagr = trends.get("finance_cost_cagr", 0)
-    if (finance_cost_cagr - debt_cagr) > 5:
-        results.append(make("YELLOW", "C2", "Finance Cost > Debt", finance_cost_cagr, f">{debt_cagr+5:.2f}", "Interest rate pressure"))
-    else:
-        results.append(default_green("C2", "Finance Cost > Debt", finance_cost_cagr, f"<={debt_cagr+5:.2f}"))
+    # E1 – Floating rate exposure
+    floating_share = m.get("floating_share")
+    if floating_share is not None:
+        high_floating = benchmarks.high_floating_share or cfg.high_floating_share
+        if floating_share > high_floating:
+            results.append(
+                _make(
+                    "E1",
+                    "Floating Rate Exposure",
+                    "floating_share",
+                    last_year,
+                    "RED",
+                    floating_share,
+                    f">{high_floating}",
+                    "High floating rate debt share increases rate sensitivity.",
+                )
+            )
+        elif floating_share > 0.4:
+            results.append(
+                _make(
+                    "E1",
+                    "Floating Rate Exposure",
+                    "floating_share",
+                    last_year,
+                    "YELLOW",
+                    floating_share,
+                    "0.4-0.6",
+                    "Moderate floating rate exposure.",
+                )
+            )
+        else:
+            results.append(
+                _make(
+                    "E1",
+                    "Floating Rate Exposure",
+                    "floating_share",
+                    last_year,
+                    "GREEN",
+                    floating_share,
+                    "<=0.4",
+                    "Stable interest profile with higher fixed component.",
+                )
+            )
 
-    # ----------------------------------------------------------------------
-    # D. MATURITY PROFILE
-    # ----------------------------------------------------------------------
+    # E2 – Cost of debt (WACD)
+    wacd = m.get("wacd")
+    if wacd is not None:
+        high_wacd = benchmarks.high_wacd or cfg.high_wacd
+        if wacd > high_wacd:
+            results.append(
+                _make(
+                    "E2",
+                    "Weighted Avg Cost of Debt",
+                    "wacd",
+                    last_year,
+                    "RED",
+                    wacd,
+                    f">{high_wacd}",
+                    "Very high borrowing cost versus benchmark.",
+                )
+            )
+        elif wacd > 0.07:
+            results.append(
+                _make(
+                    "E2",
+                    "Weighted Avg Cost of Debt",
+                    "wacd",
+                    last_year,
+                    "YELLOW",
+                    wacd,
+                    "7-12%",
+                    "Cost of debt moderately high.",
+                )
+            )
+        else:
+            results.append(
+                _make(
+                    "E2",
+                    "Weighted Avg Cost of Debt",
+                    "wacd",
+                    last_year,
+                    "GREEN",
+                    wacd,
+                    "<=7%",
+                    "Competitive borrowing cost.",
+                )
+            )
 
-    # D1 Refinancing Risk
-    refinancing_ratio = m.get("maturity_lt_1y_pct", 0)
-    if refinancing_ratio > 0.5:
-        results.append(make("RED", "D1", "Refinancing Risk", refinancing_ratio, ">50%", "High refinancing risk"))
-    else:
-        results.append(default_green("D1", "Refinancing Risk", refinancing_ratio, "<=50%"))
+    # F1 – Covenant near breach
+    buffer_pct = cfg.covenant_buffer_pct or 0.1
 
-    # D2 Balanced Maturity
-    r1 = m.get("maturity_1_3y_pct", 0)
-    r2 = m.get("maturity_gt_3y_pct", 0)
+    def _headroom(limit, actual):
+        if limit in (None, 0) or actual is None:
+            return None
+        return (limit - actual) / limit
 
-    if r1 >= 0.3 and r2 >= 0.2:
-        results.append(make("GREEN", "D2", "Balanced Maturity", r1, ">=30% & >=20%", "Good maturity spread"))
-    else:
-        results.append(default_green("D2", "Balanced Maturity", r1, "<30% or <20%"))
+    de_headroom = _headroom(covenants.de_ratio_limit, de)
+    icr_headroom = _headroom(covenants.icr_limit, icr)
+    debt_eb_headroom = _headroom(covenants.debt_ebitda_limit, debt_ebitda)
 
-    # ----------------------------------------------------------------------
-    # E. FLOATING RATE EXPOSURE
-    # ----------------------------------------------------------------------
+    if de is not None and de > covenants.de_ratio_limit:
+        results.append(
+            _make(
+                "F2",
+                "Covenant Breach D/E",
+                "de_ratio",
+                last_year,
+                "RED",
+                de,
+                f">{covenants.de_ratio_limit}",
+                "Debt-to-equity exceeds covenant limit.",
+            )
+        )
+    elif de_headroom is not None and 0 <= de_headroom <= buffer_pct:
+        results.append(
+            _make(
+                "F1",
+                "Covenant Headroom D/E",
+                "de_ratio",
+                last_year,
+                "YELLOW",
+                de,
+                f"within {buffer_pct*100:.0f}% buffer",
+                "Debt-to-equity near covenant limit.",
+            )
+        )
 
-    floating_pct = m.get("floating_share", 0)
-    if floating_pct > 0.6:
-        results.append(make("RED", "E1", "Floating Exposure", floating_pct, ">60%", "High rate sensitivity"))
-    elif floating_pct > 0.4:
-        results.append(make("YELLOW", "E1", "Floating Exposure", floating_pct, "40–60%", "Moderate risk"))
-    else:
-        results.append(default_green("E1", "Floating Exposure", floating_pct, "<=40%"))
+    if icr is not None and icr < covenants.icr_limit:
+        results.append(
+            _make(
+                "F2",
+                "Covenant Breach ICR",
+                "interest_coverage",
+                last_year,
+                "RED",
+                icr,
+                f"<{covenants.icr_limit}",
+                "Interest coverage below covenant limit.",
+            )
+        )
+    elif icr_headroom is not None and 0 <= icr_headroom <= buffer_pct:
+        results.append(
+            _make(
+                "F1",
+                "Covenant Headroom ICR",
+                "interest_coverage",
+                last_year,
+                "YELLOW",
+                icr,
+                f"within {buffer_pct*100:.0f}% buffer",
+                "Interest coverage close to covenant limit.",
+            )
+        )
 
-    # ----------------------------------------------------------------------
-    # F. WACD
-    # ----------------------------------------------------------------------
-
-    wacd = m.get("wacd", 0)
-    if wacd > 0.10:
-        results.append(make("RED", "F1", "WACD", wacd, ">10%", "Very high cost"))
-    elif wacd > 0.07:
-        results.append(make("YELLOW", "F1", "WACD", wacd, "7–10%", "Somewhat expensive"))
-    else:
-        results.append(default_green("F1", "WACD", wacd, "<=7%", "Good borrowing rate"))
+    if debt_ebitda is not None and debt_ebitda > covenants.debt_ebitda_limit:
+        results.append(
+            _make(
+                "F2",
+                "Covenant Breach Debt/EBITDA",
+                "debt_ebitda",
+                last_year,
+                "RED",
+                debt_ebitda,
+                f">{covenants.debt_ebitda_limit}",
+                "Debt/EBITDA exceeds covenant limit.",
+            )
+        )
+    elif debt_eb_headroom is not None and 0 <= debt_eb_headroom <= buffer_pct:
+        results.append(
+            _make(
+                "F1",
+                "Covenant Headroom Debt/EBITDA",
+                "debt_ebitda",
+                last_year,
+                "YELLOW",
+                debt_ebitda,
+                f"within {buffer_pct*100:.0f}% buffer",
+                "Debt/EBITDA close to covenant limit.",
+            )
+        )
 
     return results
+
