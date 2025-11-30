@@ -26,9 +26,10 @@ class RuleResult(BaseModel):
     rule_name: str
     metric_name: str
     value: float
-    status: str  # "RED", "YELLOW", "GREEN"
+    status: str  # "RED", "YELLOW", "GREEN", "NEUTRAL"
     benchmark: Optional[str] = None
     message: str
+    condition_met: bool = True  # Indicates if a threshold condition was triggered
     # Enhanced insight fields
     summary: Optional[str] = None
     implication: Optional[str] = None
@@ -407,6 +408,7 @@ class GenericAgent:
         """
         Evaluate all rules from config against calculated metrics.
         Returns rich insights for each rule based on status.
+        All rules are included in response, even if no condition is met.
         """
         results = []
         
@@ -418,8 +420,8 @@ class GenericAgent:
             # Get metric value
             value = metrics.get(metric_name, 0)
             
-            # Evaluate thresholds and get insights
-            status, message, insights = self._evaluate_rule_with_insights(rule, value)
+            # Evaluate thresholds and get insights (now returns 4-tuple with condition_met)
+            status, message, insights, condition_met = self._evaluate_rule_with_insights(rule, value)
             
             results.append(RuleResult(
                 rule_id=rule_id,
@@ -429,6 +431,7 @@ class GenericAgent:
                 status=status,
                 benchmark=f"Red: {rule.get('red', '-')}, Yellow: {rule.get('yellow', '-')}, Green: {rule.get('green', '-')}",
                 message=message,
+                condition_met=condition_met,
                 summary=insights.get("summary"),
                 implication=insights.get("implication"),
                 investor_action=insights.get("investor_action"),
@@ -440,30 +443,61 @@ class GenericAgent:
     
     def _evaluate_rule_with_insights(self, rule: Dict, value: float) -> tuple:
         """
-        Evaluate a single rule and return (status, message, insights dict).
+        Evaluate a single rule and return (status, message, insights dict, condition_met).
         Extracts rich insights from YAML config based on status.
+        Always returns a result even if no conditions are met.
         """
         red_cond = rule.get("red", "")
         yellow_cond = rule.get("yellow", "")
         green_cond = rule.get("green", "")
         insights_config = rule.get("insights", {})
         
+        # Helper to get peer_context with fallback to other status levels
+        def get_peer_context(primary_insights: Dict) -> str:
+            # First try the primary insights (current status)
+            if primary_insights.get("peer_context"):
+                return primary_insights["peer_context"]
+            # Fallback: check all status levels for peer_context
+            for status in ["red", "yellow", "green"]:
+                status_insights = insights_config.get(status, {})
+                if status_insights.get("peer_context"):
+                    return status_insights["peer_context"]
+            # Default peer context based on rule name
+            return f"Compare with industry peers for {rule.get('name', 'this metric')}"
+        
         # Check RED condition first
         if self._check_condition(value, red_cond):
             insights = insights_config.get("red", {})
             summary = insights.get("summary", f"{rule.get('name', '')} is in critical zone")
-            return "RED", f"{summary} (Value: {self._format_value(value)})", insights
+            # Ensure peer_context is populated
+            insights["peer_context"] = get_peer_context(insights)
+            return "RED", f"{summary} (Value: {self._format_value(value)})", insights, True
         
         # Check YELLOW condition
         if self._check_condition(value, yellow_cond):
             insights = insights_config.get("yellow", {})
             summary = insights.get("summary", f"{rule.get('name', '')} needs attention")
-            return "YELLOW", f"{summary} (Value: {self._format_value(value)})", insights
+            # Ensure peer_context is populated
+            insights["peer_context"] = get_peer_context(insights)
+            return "YELLOW", f"{summary} (Value: {self._format_value(value)})", insights, True
         
-        # Default to GREEN
-        insights = insights_config.get("green", {})
-        summary = insights.get("summary", f"{rule.get('name', '')} is healthy")
-        return "GREEN", f"{summary} (Value: {self._format_value(value)})", insights
+        # Check GREEN condition explicitly
+        if self._check_condition(value, green_cond):
+            insights = insights_config.get("green", {})
+            summary = insights.get("summary", f"{rule.get('name', '')} is healthy")
+            # Ensure peer_context is populated
+            insights["peer_context"] = get_peer_context(insights)
+            return "GREEN", f"{summary} (Value: {self._format_value(value)})", insights, True
+        
+        # No condition met - return NEUTRAL status with the actual value
+        # This ensures all rules are displayed even when conditions aren't met
+        return "NEUTRAL", f"Value: {self._format_value(value)} - No threshold condition triggered", {
+            "summary": f"Metric value is {self._format_value(value)}",
+            "implication": "Value does not match any defined threshold conditions (red/yellow/green)",
+            "investor_action": "Review if threshold conditions in configuration cover this value range",
+            "risk_level": "Not Assessed",
+            "peer_context": get_peer_context({})
+        }, False
     
     def _format_value(self, value: float) -> str:
         """Format value appropriately based on magnitude"""
@@ -628,6 +662,9 @@ class GenericAgent:
         """
         Calculate overall module score based on rule results.
         
+        Only rules with triggered conditions (condition_met=True) affect the score.
+        NEUTRAL status rules are displayed but don't impact scoring.
+        
         Returns:
             (score, interpretation)
         """
@@ -641,6 +678,10 @@ class GenericAgent:
         score = base_score
         
         for result in rules_results:
+            # Only apply scoring for rules where a condition was met
+            if not result.condition_met:
+                continue  # NEUTRAL status - skip scoring
+                
             if result.status == "RED":
                 score -= red_penalty
             elif result.status == "YELLOW":

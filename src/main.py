@@ -24,25 +24,22 @@ from src.app.schemas import (
     FinancialData,
     AnalyzeRequest,
 )
-from src.app.agents import AgentOrchestrator, GenericAgent, AnalysisWorkflow, create_workflow
+from src.app.agents import GenericAgent, AnalysisWorkflow, create_workflow
 
 
 # ---------------------------------------------------------
 # FASTAPI APP WITH LIFESPAN
 # ---------------------------------------------------------
 
-# Global instances
-orchestrator: AgentOrchestrator = None
+# Global workflow instance
 workflow: AnalysisWorkflow = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize orchestrator and workflow on startup, cleanup on shutdown"""
-    global orchestrator, workflow
-    orchestrator = AgentOrchestrator()
+    """Initialize workflow on startup, cleanup on shutdown"""
+    global workflow
     workflow = create_workflow(enable_checkpoints=True)
-    print(f"Initialized {len(orchestrator.list_modules())} modules from YAML config")
-    print("LangGraph workflow initialized")
+    print(f"LangGraph workflow initialized with {len(workflow.available_modules)} modules")
     
     # Save workflow graph on startup
     try:
@@ -77,8 +74,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Fundamental Analysis Multi-Agent Engine",
-    version="3.0",
-    description="API for comprehensive financial analysis with 12 YAML-configurable modules and LangGraph workflow",
+    version="4.0",
+    description="API for comprehensive financial analysis with LangGraph workflow orchestration",
     lifespan=lifespan
 )
 
@@ -325,161 +322,103 @@ def root():
     """API root with available endpoints"""
     return {
         "message": "Fundamental Analysis Multi-Agent Engine",
-        "version": "3.0",
-        "architecture": "YAML-driven GenericAgent with LangGraph workflow",
+        "version": "4.0",
+        "architecture": "LangGraph Workflow with YAML-driven GenericAgents",
         "endpoints": {
-            "/analyze": "POST - Run analysis with specified modules (or all)",
-            "/analyze/{module_id}": "POST - Run specific module analysis",
-            "/workflow/analyze": "POST - Run analysis with LangGraph workflow (recommended)",
-            "/workflow/stream": "POST - Stream workflow execution with real-time updates",
-            "/workflow/graph": "GET - Get workflow graph visualization",
+            "/analyze": "POST - Run analysis with LangGraph workflow",
+            "/analyze/stream": "POST - Stream workflow execution with real-time updates",
             "/modules": "GET - List all available modules",
             "/modules/{module_id}": "GET - Get module details",
-            "/modules/{module_id}/required-fields": "GET - Get required input fields",
+            "/graph": "GET - Get workflow graph visualization",
             "/reload-config": "POST - Reload YAML configuration",
         }
     }
 
 
 @app.get("/modules")
-def list_modules(include_disabled: bool = False):
-    """List all available analytical modules from YAML config"""
-    modules = orchestrator.list_modules(include_disabled=include_disabled)
+def list_modules():
+    """List all available analytical modules"""
+    from src.app.config import load_agents_config
+    config = load_agents_config()
+    modules = []
+    for module_id, module_cfg in config.get("modules", {}).items():
+        if module_cfg.get("enabled", True):
+            modules.append({
+                "id": module_id,
+                "name": module_cfg.get("name", module_id),
+                "description": module_cfg.get("description", ""),
+                "enabled": module_cfg.get("enabled", True),
+            })
     return {
         "total_modules": len(modules),
-        "modules": [m.model_dump() for m in modules],
+        "modules": modules,
     }
 
 
 @app.get("/modules/{module_id}")
 def get_module(module_id: str):
     """Get information about a specific module"""
-    info = orchestrator.get_module_info(module_id)
-    if not info:
+    from src.app.config import load_agents_config
+    config = load_agents_config()
+    module_cfg = config.get("modules", {}).get(module_id)
+    if not module_cfg:
         raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
-    return info.model_dump()
+    return {
+        "id": module_id,
+        "name": module_cfg.get("name", module_id),
+        "description": module_cfg.get("description", ""),
+        "enabled": module_cfg.get("enabled", True),
+        "input_fields": module_cfg.get("input_fields", []),
+        "rules_count": len(module_cfg.get("rules", [])),
+    }
 
 
-@app.get("/modules/{module_id}/required-fields")
+@app.get("/modules/{module_id}/fields")
 def get_module_fields(module_id: str):
     """Get required input fields for a module"""
-    info = orchestrator.get_module_info(module_id)
-    if not info:
+    from src.app.config import load_agents_config
+    config = load_agents_config()
+    module_cfg = config.get("modules", {}).get(module_id)
+    if not module_cfg:
         raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
     return {
         "module_id": module_id,
-        "module_name": info.name,
-        "required_fields": info.input_fields,
+        "module_name": module_cfg.get("name", module_id),
+        "required_fields": module_cfg.get("input_fields", []),
     }
 
 
 @app.post("/reload-config")
 def reload_config():
-    """Reload YAML configuration (useful after editing agents_config.yaml)"""
-    orchestrator.reload_config()
-    modules = orchestrator.list_modules()
+    """Reload YAML configuration and rebuild workflow"""
+    global workflow
+    workflow = create_workflow(enable_checkpoints=True)
     return {
         "status": "success",
         "message": "Configuration reloaded",
-        "modules_loaded": len(modules),
+        "modules_loaded": len(workflow.available_modules),
     }
 
+
+# ---------------------------------------------------------
+# MAIN ANALYSIS ENDPOINTS (Using LangGraph Workflow)
+# ---------------------------------------------------------
 
 @app.post("/analyze")
 def analyze(req: AnalyzeRequest):
     """
-    Run comprehensive analysis with multiple modules.
+    Run comprehensive analysis using LangGraph workflow.
     
-    If no modules specified, runs all enabled modules.
-    Includes YoY growth metrics for all years (descending order).
-    """
-    try:
-        company = req.company.upper()
-        fds = req.financial_data.financial_years
-        
-        # Use most recent year for current data
-        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
-        current_data = financial_year_to_dict(sorted_fds[0])
-        historical_data = prepare_historical_data(fds)
-        
-        # Calculate YoY growth for all metrics
-        yoy_growth = calculate_yoy_growth(fds)
-        
-        # Determine which modules to run
-        if req.modules:
-            result = orchestrator.run_multiple(
-                module_ids=req.modules,
-                data=current_data,
-                historical_data=historical_data,
-                generate_narrative=req.generate_narrative
-            )
-        else:
-            result = orchestrator.run_all(
-                data=current_data,
-                historical_data=historical_data,
-                generate_narrative=req.generate_narrative
-            )
-        
-        return {
-            "company": company,
-            "analysis": result.model_dump(),
-            "yoy_growth": {"metrics": yoy_growth},
-        }
-        
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@app.post("/analyze/{module_id}")
-def analyze_single_module(module_id: str, req: AnalyzeRequest):
-    """Run analysis for a specific module with YoY growth metrics"""
-    try:
-        company = req.company.upper()
-        fds = req.financial_data.financial_years
-        
-        # Use most recent year for current data
-        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
-        current_data = financial_year_to_dict(sorted_fds[0])
-        historical_data = prepare_historical_data(fds)
-        
-        # Calculate YoY growth for all metrics
-        yoy_growth = calculate_yoy_growth(fds)
-        
-        result = orchestrator.run(
-            module_id=module_id,
-            data=current_data,
-            historical_data=historical_data,
-            generate_narrative=req.generate_narrative
-        )
-        
-        return {
-            "company": company,
-            "module": module_id,
-            "analysis": result.model_dump(),
-            "yoy_growth": {"metrics": yoy_growth},
-        }
-        
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# ---------------------------------------------------------
-# LANGGRAPH WORKFLOW ENDPOINTS
-# ---------------------------------------------------------
-
-@app.post("/workflow/analyze")
-def workflow_analyze(req: AnalyzeRequest):
-    """
-    Run analysis using LangGraph workflow.
-    
-    This endpoint uses LangGraph for:
+    Features:
     - State-based workflow management
     - Automatic risk flag aggregation
     - Key insights extraction
     - Comprehensive summary generation
+    - YoY growth metrics for all years (descending order)
     
+    Args:
+        modules: List of module IDs to run (None = all enabled modules)
+        
     Returns structured output with risk_flags, key_insights, and summary.
     """
     try:
@@ -493,13 +432,15 @@ def workflow_analyze(req: AnalyzeRequest):
         
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
+
+        modules = ['borrowings'] if req.modules is None else req.modules
         
         # Run workflow
         result = workflow.run(
             company=company,
             current_data=current_data,
             historical_data=historical_data,
-            modules=req.modules,
+            modules=modules,
             generate_narrative=req.generate_narrative
         )
         
@@ -525,8 +466,8 @@ def workflow_analyze(req: AnalyzeRequest):
         }, status_code=500)
 
 
-@app.post("/workflow/stream")
-async def workflow_stream(req: AnalyzeRequest):
+@app.post("/analyze/stream")
+async def analyze_stream(req: AnalyzeRequest):
     """
     Stream workflow execution for real-time progress updates.
     
@@ -565,51 +506,31 @@ async def workflow_stream(req: AnalyzeRequest):
     )
 
 
-@app.get("/workflow/graph")
+@app.get("/graph")
 def get_workflow_graph():
-    """Get a text visualization of the workflow graph"""
+    """Get workflow graph visualization and available modules"""
     try:
         graph_viz = workflow.get_graph_visualization()
         return {
             "graph": graph_viz,
-            "modules": workflow.available_modules
+            "modules": workflow.available_modules,
+            "usage_examples": {
+                "single_module": {
+                    "modules": ["borrowings"],
+                    "description": "Run only the borrowings analysis module"
+                },
+                "multiple_modules": {
+                    "modules": ["borrowings", "equity_funding_mix"],
+                    "description": "Run both borrowings and equity_funding_mix modules"
+                },
+                "all_modules": {
+                    "modules": None,
+                    "description": "Run all enabled modules (default behavior)"
+                }
+            }
         }
     except Exception as e:
         return {"error": str(e), "modules": workflow.available_modules}
-
-
-@app.get("/workflow/modules")
-def get_available_modules():
-    """
-    Get list of available modules for workflow execution.
-    
-    Use these module IDs in the 'modules' field of analyze requests
-    to select which agents to run.
-    
-    Example usage:
-    - modules: ["borrowings"] - Run only borrowings analysis
-    - modules: ["equity_funding_mix"] - Run only equity funding mix
-    - modules: ["borrowings", "equity_funding_mix"] - Run both
-    - modules: null or omit - Run all enabled modules
-    """
-    return {
-        "available_modules": workflow.available_modules,
-        "total_count": len(workflow.available_modules),
-        "usage_examples": {
-            "single_module": {
-                "modules": ["borrowings"],
-                "description": "Run only the borrowings analysis module"
-            },
-            "multiple_modules": {
-                "modules": ["borrowings", "equity_funding_mix"],
-                "description": "Run both borrowings and equity_funding_mix modules"
-            },
-            "all_modules": {
-                "modules": None,
-                "description": "Run all enabled modules (default behavior)"
-            }
-        }
-    }
 
 
 # ---------------------------------------------------------
