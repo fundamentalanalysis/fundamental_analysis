@@ -58,18 +58,46 @@ modules:
         red: "> 0"
         yellow: "-"
         green: "<= 0"
+        insights:
+          red:
+            summary: "Debt growing faster than earnings capacity"
+            implication: "Company is accumulating debt faster than its ability to service it. This trajectory is unsustainable and may lead to credit stress."
+            investor_action: "Monitor credit rating outlook, check covenants, assess management's deleveraging plan."
+            risk_level: "High"
+          green:
+            summary: "Healthy debt-to-earnings trajectory"
+            implication: "Earnings growth outpacing debt growth indicates improving debt serviceability and financial flexibility."
+            investor_action: "Positive signal; company has capacity for strategic investments or shareholder returns."
+            risk_level: "Low"
       - id: A3
         name: "LT Debt Up, Revenue Flat"
         metric: lt_debt_vs_revenue
         red: "-"
         yellow: "> 0"
         green: "<= 0"
+        insights:
+          yellow:
+            summary: "Long-term debt growing without revenue growth"
+            implication: "Debt is being used for non-revenue generating purposes or expansion hasn't translated to sales yet."
+            investor_action: "Investigate use of proceeds - is it for expansion, acquisitions, or refinancing?"
+            risk_level: "Medium"
+          green:
+            summary: "Revenue growth supporting debt levels"
+            implication: "Debt is being used productively to grow the business."
+            investor_action: "Healthy indicator; monitor execution of growth strategy."
+            risk_level: "Low"
       - id: A3b
         name: "Capex Funded by Debt"
         metric: cwip_to_assets
         red: "-"
         yellow: "-"
         green: "> 0.10"
+        insights:
+          green:
+            summary: "Active capital investments underway"
+            implication: "Significant CWIP indicates ongoing expansion. Check if funded prudently and expected ROI timeline."
+            investor_action: "Review management commentary on project timelines and expected returns."
+            risk_level: "Low"
       # B. Leverage Ratios
       - id: B1
         name: "Debt-to-Equity Ratio"
@@ -77,12 +105,46 @@ modules:
         red: "> 1.0"
         yellow: "> 0.5"
         green: "<= 0.5"
+        insights:
+          red:
+            summary: "Highly leveraged balance sheet"
+            implication: "Debt exceeds equity, indicating significant financial risk. Vulnerable to interest rate shocks and earnings volatility."
+            investor_action: "Assess refinancing risk, check for upcoming maturities, review debt covenants."
+            risk_level: "High"
+            peer_context: "Most investment-grade companies maintain D/E below 1.0x"
+          yellow:
+            summary: "Moderate leverage levels"
+            implication: "Leverage is manageable but warrants monitoring. Limited cushion for unexpected downturns."
+            investor_action: "Monitor quarterly for any increase in leverage or deterioration in earnings."
+            risk_level: "Medium"
+          green:
+            summary: "Conservative capital structure"
+            implication: "Strong equity base provides cushion against volatility. Company has capacity for strategic borrowing if needed."
+            investor_action: "Positive; consider if company is under-leveraged and missing growth opportunities."
+            risk_level: "Low"
       - id: B2
         name: "Debt-to-EBITDA"
         metric: debt_ebitda
         red: "> 4.0"
         yellow: "> 2.0"
         green: "<= 2.0"
+        insights:
+          red:
+            summary: "Very high leverage relative to cash generation"
+            implication: "Would take 4+ years of EBITDA to repay debt. High refinancing risk and limited financial flexibility."
+            investor_action: "Review debt maturity schedule urgently. Check if any covenant breaches are imminent."
+            risk_level: "High"
+            peer_context: "Rating agencies typically consider >4x as highly speculative"
+          yellow:
+            summary: "Elevated but manageable leverage"
+            implication: "2-4 years of earnings needed to repay debt. May face pressure during economic downturns."
+            investor_action: "Monitor EBITDA trends closely. Any earnings decline will worsen this ratio."
+            risk_level: "Medium"
+          green:
+            summary: "Strong debt coverage"
+            implication: "Can repay all debt within 2 years of cash generation. Strong position for growth or shareholder returns."
+            investor_action: "Favorable credit profile; attractive for lenders and credit upgrade potential."
+            risk_level: "Low"
       # C. Interest Coverage Rules
       - id: C1
         name: "Interest Coverage Ratio"
@@ -90,12 +152,40 @@ modules:
         red: "< 1.5"
         yellow: "< 3.0"
         green: ">= 3.0"
+        insights:
+          red:
+            summary: "Critical - earnings barely cover interest"
+            implication: "Company is at risk of missing interest payments. Any earnings decline could trigger default."
+            investor_action: "HIGH ALERT: Review liquidity position, check for covenant waivers, assess restructuring risk."
+            risk_level: "Critical"
+            peer_context: "ICR below 1.5x is considered distressed by most credit analysts"
+          yellow:
+            summary: "Tight interest coverage"
+            implication: "Limited margin of safety. Earnings decline of 30-50% could stress debt servicing."
+            investor_action: "Monitor earnings stability, check for any refinancing at higher rates."
+            risk_level: "Medium"
+          green:
+            summary: "Comfortable interest coverage"
+            implication: "Strong earnings cushion to service debt. Can absorb earnings volatility without stress."
+            investor_action: "Healthy indicator; supports credit quality and borrowing capacity."
+            risk_level: "Low"
       - id: C2
         name: "Finance Cost vs Debt Growth"
         metric: finance_cost_vs_debt
         red: "-"
         yellow: "> 5.0"
         green: "<= 5.0"
+        insights:
+          yellow:
+            summary: "Interest costs growing faster than debt"
+            implication: "Either refinancing at higher rates or floating rate exposure is hurting. Margin compression ahead."
+            investor_action: "Check fixed vs floating debt mix. Review recent refinancing terms."
+            risk_level: "Medium"
+          green:
+            summary: "Interest costs under control"
+            implication: "Company is managing borrowing costs well. May benefit from favorable refinancing."
+            investor_action: "Positive trend; supports margin stability."
+            risk_level: "Low"
       # D. Maturity Profile Rules
       - id: D1
         name: "Refinancing Risk"
@@ -103,12 +193,34 @@ modules:
         red: "> 0.50"
         yellow: "> 0.30"
         green: "<= 0.30"
+        insights:
+          red:
+            summary: "High near-term refinancing burden"
+            implication: "Over 50% of debt due within 1 year. Significant refinancing risk, especially if credit markets tighten."
+            investor_action: "URGENT: Assess liquidity sources, review committed credit lines, check bank relationships."
+            risk_level: "High"
+          yellow:
+            summary: "Moderate refinancing needs"
+            implication: "30-50% debt due within a year needs proactive management."
+            investor_action: "Monitor refinancing progress and terms. Check available liquidity."
+            risk_level: "Medium"
+          green:
+            summary: "Well-laddered debt maturity"
+            implication: "Minimal near-term pressure. Company has time to plan refinancing optimally."
+            investor_action: "Favorable maturity profile; reduces execution risk."
+            risk_level: "Low"
       - id: D2
         name: "Balanced Maturity"
         metric: maturity_balance
         red: "-"
         yellow: "-"
         green: "> 0"
+        insights:
+          green:
+            summary: "Well-diversified maturity schedule"
+            implication: "Debt spread across different tenors reduces bullet payment risk and provides flexibility."
+            investor_action: "Positive; indicates proactive treasury management."
+            risk_level: "Low"
       # E. Interest Rate Risk
       - id: E1
         name: "Floating Rate Exposure"
@@ -116,6 +228,22 @@ modules:
         red: "> 0.60"
         yellow: "> 0.40"
         green: "<= 0.40"
+        insights:
+          red:
+            summary: "High sensitivity to interest rate changes"
+            implication: "Over 60% floating rate debt means every 1% rate increase significantly impacts finance costs."
+            investor_action: "Model P&L impact of rate hikes. Check for hedging instruments."
+            risk_level: "High"
+          yellow:
+            summary: "Moderate interest rate exposure"
+            implication: "Balanced but some vulnerability to rate increases."
+            investor_action: "Monitor central bank policy and company's hedging strategy."
+            risk_level: "Medium"
+          green:
+            summary: "Well-hedged interest rate position"
+            implication: "Predominantly fixed rate debt provides cost predictability."
+            investor_action: "Favorable; finance costs are predictable for planning."
+            risk_level: "Low"
       # F. Cost of Debt
       - id: F1
         name: "Weighted Avg Cost of Debt"
@@ -123,6 +251,23 @@ modules:
         red: "> 0.10"
         yellow: "> 0.07"
         green: "<= 0.07"
+        insights:
+          red:
+            summary: "High borrowing costs"
+            implication: "Above 10% cost of debt suggests either poor credit quality or unfavorable terms. Compresses margins significantly."
+            investor_action: "Compare with peers. Check if refinancing opportunities exist at better rates."
+            risk_level: "High"
+            peer_context: "Investment-grade companies typically borrow at 5-8%"
+          yellow:
+            summary: "Moderate borrowing costs"
+            implication: "7-10% is acceptable for many sectors but limits ROI on leveraged investments."
+            investor_action: "Monitor vs peer group. Look for refinancing opportunities."
+            risk_level: "Medium"
+          green:
+            summary: "Favorable borrowing terms"
+            implication: "Low cost of debt indicates strong credit profile and/or favorable market timing."
+            investor_action: "Competitive advantage; supports returns on capital-intensive projects."
+            risk_level: "Low"
 
   # 2. EQUITY & FUNDING MIX MODULE
   equity_funding_mix:
@@ -155,30 +300,111 @@ modules:
         red: "< 0"
         yellow: "< 0.05"
         green: ">= 0.05"
+        insights:
+          red:
+            summary: "Declining retained earnings"
+            implication: "Company is consuming more cash than it generates, or paying out more than it earns. Reduces internal funding capacity."
+            investor_action: "Check for one-time losses, aggressive dividends, or sustained operating losses. Review sustainability of capital allocation."
+            risk_level: "High"
+          yellow:
+            summary: "Slow retained earnings growth"
+            implication: "Internal accrual is positive but modest. May need external funding for major expansions."
+            investor_action: "Monitor PAT growth and dividend policy. Assess if payout is too high."
+            risk_level: "Medium"
+          green:
+            summary: "Strong retained earnings accumulation"
+            implication: "Company is building equity base through profits. Self-funding capability is improving."
+            investor_action: "Positive signal; supports future growth without dilution or debt."
+            risk_level: "Low"
       - id: B1
         name: "Return on Equity"
         metric: roe
         red: "< 0.10"
         yellow: "< 0.15"
         green: ">= 0.15"
+        insights:
+          red:
+            summary: "Subpar returns on shareholder capital"
+            implication: "Returns below 10% often trail cost of equity. Value destruction risk if sustained."
+            investor_action: "Compare with peers and industry average. Check if ROE is depressed by one-time items."
+            risk_level: "High"
+            peer_context: "Most quality companies maintain ROE above 15%"
+          yellow:
+            summary: "Moderate but improvable ROE"
+            implication: "Acceptable returns but room for improvement through margin expansion or better asset turnover."
+            investor_action: "Monitor for improving trends. Check management's ROE improvement initiatives."
+            risk_level: "Medium"
+          green:
+            summary: "Strong shareholder value creation"
+            implication: "Returns well above cost of equity. Company is creating value for shareholders."
+            investor_action: "Premium valuation justified. Check for consistency across cycles."
+            risk_level: "Low"
       - id: C1
         name: "Dividend Payout"
         metric: dividend_payout_ratio
         red: "> 1.0"
         yellow: "> 0.50"
         green: "<= 0.50"
+        insights:
+          red:
+            summary: "Unsustainable dividend - paying more than earned"
+            implication: "Payout exceeds 100% of profits. Either dipping into reserves or borrowing for dividends. Not sustainable."
+            investor_action: "ALERT: Expect dividend cut ahead. Check if special dividend or one-time occurrence."
+            risk_level: "Critical"
+          yellow:
+            summary: "High but potentially sustainable payout"
+            implication: "Paying out 50-100% of profits limits reinvestment capacity. Suitable for mature, stable businesses."
+            investor_action: "Assess growth needs. High payout okay if business is mature with limited capex needs."
+            risk_level: "Medium"
+          green:
+            summary: "Balanced dividend with retained growth"
+            implication: "Retaining majority of earnings for growth while providing shareholder returns. Healthy balance."
+            investor_action: "Favorable; company balancing growth and income. Check dividend growth track record."
+            risk_level: "Low"
       - id: D1
         name: "Equity Dilution"
         metric: equity_dilution_pct
         red: "> 0.10"
         yellow: "> 0.05"
         green: "<= 0.05"
+        insights:
+          red:
+            summary: "Significant equity dilution"
+            implication: "Share capital increased by >10%. Existing shareholders' ownership significantly reduced. Check valuation at issuance."
+            investor_action: "Review reason for issuance - growth funding, deleveraging, or distress? Was it at fair value?"
+            risk_level: "High"
+          yellow:
+            summary: "Moderate dilution"
+            implication: "5-10% dilution is notable. Check if EPS growth will offset ownership dilution."
+            investor_action: "Verify use of proceeds and expected returns vs dilution cost."
+            risk_level: "Medium"
+          green:
+            summary: "Minimal shareholder dilution"
+            implication: "Limited equity issuance preserves existing shareholders' ownership and EPS."
+            investor_action: "Positive; company is funding growth without excessive dilution."
+            risk_level: "Low"
       - id: E1
         name: "Debt-to-Equity"
         metric: debt_to_equity
         red: "> 1.5"
         yellow: "> 1.0"
         green: "<= 1.0"
+        insights:
+          red:
+            summary: "Debt-heavy capital structure"
+            implication: "Debt is 1.5x+ equity. Financial risk is elevated. Vulnerable to interest rate shocks."
+            investor_action: "Check interest coverage, assess refinancing risk, review deleveraging plans."
+            risk_level: "High"
+          yellow:
+            summary: "Leveraged but manageable"
+            implication: "Equal or slightly higher debt than equity. Watch for deterioration."
+            investor_action: "Monitor quarterly. Check if leverage is for growth or covering operating shortfalls."
+            risk_level: "Medium"
+          green:
+            summary: "Equity-dominated capital structure"
+            implication: "Strong equity base provides stability. Can access debt markets if needed for growth."
+            investor_action: "Favorable; company has financial flexibility for opportunities."
+            risk_level: "Low"
 
   # 3. LIQUIDITY MODULE
   # liquidity:

@@ -21,7 +21,7 @@ from src.app.config import load_agents_config, get_module_config, OPENAI_MODEL, 
 # ---------------------------------------------------------------------------
 
 class RuleResult(BaseModel):
-    """Single rule evaluation result"""
+    """Single rule evaluation result with investor insights"""
     rule_id: str
     rule_name: str
     metric_name: str
@@ -29,6 +29,12 @@ class RuleResult(BaseModel):
     status: str  # "RED", "YELLOW", "GREEN"
     benchmark: Optional[str] = None
     message: str
+    # Enhanced insight fields
+    summary: Optional[str] = None
+    implication: Optional[str] = None
+    investor_action: Optional[str] = None
+    risk_level: Optional[str] = None
+    peer_context: Optional[str] = None
 
 
 class TrendResult(BaseModel):
@@ -400,6 +406,7 @@ class GenericAgent:
     def evaluate_rules(self, metrics: Dict[str, float]) -> List[RuleResult]:
         """
         Evaluate all rules from config against calculated metrics.
+        Returns rich insights for each rule based on status.
         """
         results = []
         
@@ -411,8 +418,8 @@ class GenericAgent:
             # Get metric value
             value = metrics.get(metric_name, 0)
             
-            # Evaluate thresholds
-            status, message = self._evaluate_rule(rule, value)
+            # Evaluate thresholds and get insights
+            status, message, insights = self._evaluate_rule_with_insights(rule, value)
             
             results.append(RuleResult(
                 rule_id=rule_id,
@@ -421,30 +428,51 @@ class GenericAgent:
                 value=round(value, 4),
                 status=status,
                 benchmark=f"Red: {rule.get('red', '-')}, Yellow: {rule.get('yellow', '-')}, Green: {rule.get('green', '-')}",
-                message=message
+                message=message,
+                summary=insights.get("summary"),
+                implication=insights.get("implication"),
+                investor_action=insights.get("investor_action"),
+                risk_level=insights.get("risk_level"),
+                peer_context=insights.get("peer_context")
             ))
         
         return results
     
-    def _evaluate_rule(self, rule: Dict, value: float) -> tuple:
+    def _evaluate_rule_with_insights(self, rule: Dict, value: float) -> tuple:
         """
-        Evaluate a single rule and return (status, message).
-        Parses conditions like "> 1.0", "< 0.5", ">= 0.15", etc.
+        Evaluate a single rule and return (status, message, insights dict).
+        Extracts rich insights from YAML config based on status.
         """
         red_cond = rule.get("red", "")
         yellow_cond = rule.get("yellow", "")
         green_cond = rule.get("green", "")
+        insights_config = rule.get("insights", {})
         
         # Check RED condition first
         if self._check_condition(value, red_cond):
-            return "RED", f"{rule.get('name', '')} is in RED zone ({value:.2%})"
+            insights = insights_config.get("red", {})
+            summary = insights.get("summary", f"{rule.get('name', '')} is in critical zone")
+            return "RED", f"{summary} (Value: {self._format_value(value)})", insights
         
         # Check YELLOW condition
         if self._check_condition(value, yellow_cond):
-            return "YELLOW", f"{rule.get('name', '')} is in YELLOW zone ({value:.2%})"
+            insights = insights_config.get("yellow", {})
+            summary = insights.get("summary", f"{rule.get('name', '')} needs attention")
+            return "YELLOW", f"{summary} (Value: {self._format_value(value)})", insights
         
         # Default to GREEN
-        return "GREEN", f"{rule.get('name', '')} is healthy ({value:.2%})"
+        insights = insights_config.get("green", {})
+        summary = insights.get("summary", f"{rule.get('name', '')} is healthy")
+        return "GREEN", f"{summary} (Value: {self._format_value(value)})", insights
+    
+    def _format_value(self, value: float) -> str:
+        """Format value appropriately based on magnitude"""
+        if abs(value) < 0.01:
+            return f"{value:.4f}"
+        elif abs(value) < 10:
+            return f"{value:.2%}" if abs(value) <= 1 else f"{value:.2f}x"
+        else:
+            return f"{value:.2f}"
     
     def _check_condition(self, value: float, condition: str) -> bool:
         """

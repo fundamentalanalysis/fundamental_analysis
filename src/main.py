@@ -81,10 +81,152 @@ def prepare_historical_data(fds: List[FinancialYearInput]) -> List[Dict[str, flo
     return [financial_year_to_dict(fy) for fy in sorted_fds]
 
 
-def calculate_yoy_growth(fds: List[FinancialYearInput]) -> Dict[str, Dict[str, Optional[float]]]:
+# Metric descriptions for investor-friendly summaries
+METRIC_DESCRIPTIONS = {
+    # Debt metrics
+    "short_term_debt": {"name": "Short-term Debt", "category": "Leverage", "good_direction": "stable", "description": "Debt maturing within 1 year"},
+    "long_term_debt": {"name": "Long-term Debt", "category": "Leverage", "good_direction": "stable", "description": "Debt maturing after 1 year"},
+    "total_debt": {"name": "Total Debt", "category": "Leverage", "good_direction": "down", "description": "Combined short and long-term borrowings"},
+    "total_equity": {"name": "Total Equity", "category": "Capital Structure", "good_direction": "up", "description": "Shareholders' funds including reserves"},
+    
+    # Profitability metrics
+    "revenue": {"name": "Revenue", "category": "Growth", "good_direction": "up", "description": "Total sales/income from operations"},
+    "ebitda": {"name": "EBITDA", "category": "Profitability", "good_direction": "up", "description": "Earnings before interest, tax, depreciation & amortization"},
+    "ebit": {"name": "EBIT", "category": "Profitability", "good_direction": "up", "description": "Operating profit before interest and tax"},
+    "pat": {"name": "PAT", "category": "Profitability", "good_direction": "up", "description": "Profit after tax - bottom line earnings"},
+    
+    # Cost metrics
+    "finance_cost": {"name": "Finance Cost", "category": "Cost", "good_direction": "down", "description": "Interest and borrowing costs"},
+    "interest_expense": {"name": "Interest Expense", "category": "Cost", "good_direction": "down", "description": "Interest paid on borrowings"},
+    "cogs": {"name": "Cost of Goods Sold", "category": "Cost", "good_direction": "stable", "description": "Direct costs of production"},
+    
+    # Investment metrics
+    "capex": {"name": "Capital Expenditure", "category": "Investment", "good_direction": "context", "description": "Investment in fixed assets"},
+    "cwip": {"name": "CWIP", "category": "Investment", "good_direction": "context", "description": "Capital work-in-progress - ongoing projects"},
+    "net_fixed_assets": {"name": "Net Fixed Assets", "category": "Assets", "good_direction": "up", "description": "Fixed assets after depreciation"},
+    "gross_block": {"name": "Gross Block", "category": "Assets", "good_direction": "up", "description": "Total fixed assets at cost"},
+    
+    # Equity & Funding
+    "share_capital": {"name": "Share Capital", "category": "Capital Structure", "good_direction": "stable", "description": "Paid-up equity share capital"},
+    "reserves_and_surplus": {"name": "Reserves & Surplus", "category": "Capital Structure", "good_direction": "up", "description": "Retained earnings and other reserves"},
+    "net_worth": {"name": "Net Worth", "category": "Capital Structure", "good_direction": "up", "description": "Total shareholders' equity"},
+    "dividend_paid": {"name": "Dividend Paid", "category": "Shareholder Returns", "good_direction": "up", "description": "Cash dividends distributed to shareholders"},
+    
+    # Cash Flow metrics
+    "operating_cash_flow": {"name": "Operating Cash Flow", "category": "Cash Flow", "good_direction": "up", "description": "Cash generated from core operations"},
+    "free_cash_flow": {"name": "Free Cash Flow", "category": "Cash Flow", "good_direction": "up", "description": "Cash available after capex"},
+    "cash_and_equivalents": {"name": "Cash & Equivalents", "category": "Liquidity", "good_direction": "up", "description": "Liquid cash and near-cash holdings"},
+    
+    # Working Capital metrics
+    "current_assets": {"name": "Current Assets", "category": "Working Capital", "good_direction": "up", "description": "Assets convertible to cash within 1 year"},
+    "current_liabilities": {"name": "Current Liabilities", "category": "Working Capital", "good_direction": "stable", "description": "Obligations due within 1 year"},
+    "inventory": {"name": "Inventory", "category": "Working Capital", "good_direction": "context", "description": "Stock of raw materials, WIP, finished goods"},
+    "trade_receivables": {"name": "Trade Receivables", "category": "Working Capital", "good_direction": "context", "description": "Amounts owed by customers"},
+    "trade_payables": {"name": "Trade Payables", "category": "Working Capital", "good_direction": "context", "description": "Amounts owed to suppliers"},
+    
+    # Balance Sheet
+    "total_assets": {"name": "Total Assets", "category": "Balance Sheet", "good_direction": "up", "description": "Sum of all company assets"},
+    "total_liabilities": {"name": "Total Liabilities", "category": "Balance Sheet", "good_direction": "stable", "description": "Sum of all company obligations"},
+    "book_value": {"name": "Book Value", "category": "Valuation", "good_direction": "up", "description": "Net asset value per share"},
+}
+
+
+def generate_metric_summary(metric: str, growth_values: Dict[str, float]) -> Dict[str, Any]:
+    """
+    Generate a pre-built summary for a metric based on its YoY growth pattern.
+    """
+    # Get metric info or use defaults
+    metric_info = METRIC_DESCRIPTIONS.get(metric, {
+        "name": metric.replace("_", " ").title(),
+        "category": "Other",
+        "good_direction": "context",
+        "description": f"Financial metric: {metric}"
+    })
+    
+    # Filter out None values for analysis
+    valid_values = {k: v for k, v in growth_values.items() if v is not None}
+    
+    if not valid_values:
+        return {
+            "name": metric_info["name"],
+            "category": metric_info["category"],
+            "description": metric_info["description"],
+            "trend": "Insufficient data",
+            "assessment": "Unable to assess - insufficient historical data",
+            "values": growth_values
+        }
+    
+    values_list = list(valid_values.values())
+    latest_growth = values_list[0] if values_list else 0
+    avg_growth = sum(values_list) / len(values_list)
+    
+    # Determine trend
+    if len(values_list) >= 2:
+        if all(v > values_list[i+1] for i, v in enumerate(values_list[:-1])):
+            trend = "Accelerating"
+        elif all(v < values_list[i+1] for i, v in enumerate(values_list[:-1])):
+            trend = "Decelerating"
+        elif all(v > 0 for v in values_list):
+            trend = "Consistently Growing"
+        elif all(v < 0 for v in values_list):
+            trend = "Consistently Declining"
+        elif values_list[0] > 0 and values_list[-1] < 0:
+            trend = "Recovering"
+        elif values_list[0] < 0 and values_list[-1] > 0:
+            trend = "Deteriorating"
+        else:
+            trend = "Volatile"
+    else:
+        trend = "Growing" if latest_growth > 0 else "Declining" if latest_growth < 0 else "Flat"
+    
+    # Generate assessment based on good_direction
+    good_dir = metric_info["good_direction"]
+    
+    if good_dir == "up":
+        if avg_growth > 10:
+            assessment = f"Strong growth trajectory. {metric_info['name']} growing at {avg_growth:.1f}% avg - positive for fundamentals."
+        elif avg_growth > 0:
+            assessment = f"Moderate growth. {metric_info['name']} showing steady improvement at {avg_growth:.1f}% avg."
+        elif avg_growth > -5:
+            assessment = f"Relatively flat. {metric_info['name']} needs improvement to support growth."
+        else:
+            assessment = f"Concerning decline. {metric_info['name']} falling at {avg_growth:.1f}% avg - monitor closely."
+    elif good_dir == "down":
+        if avg_growth < -5:
+            assessment = f"Positive trend. {metric_info['name']} declining at {avg_growth:.1f}% avg - improving efficiency."
+        elif avg_growth < 5:
+            assessment = f"Relatively stable. {metric_info['name']} under control."
+        else:
+            assessment = f"Rising concern. {metric_info['name']} growing at {avg_growth:.1f}% avg - may pressure margins."
+    elif good_dir == "stable":
+        if abs(avg_growth) < 10:
+            assessment = f"Stable as expected. {metric_info['name']} maintaining consistency at {avg_growth:.1f}% avg."
+        elif avg_growth > 15:
+            assessment = f"Significant increase. {metric_info['name']} up {avg_growth:.1f}% avg - verify if strategic or concerning."
+        else:
+            assessment = f"Notable decrease. {metric_info['name']} down {avg_growth:.1f}% avg - check underlying reasons."
+    else:  # context-dependent
+        if abs(latest_growth) > 20:
+            assessment = f"Significant movement. {metric_info['name']} changed {latest_growth:.1f}% recently - context-dependent interpretation needed."
+        else:
+            assessment = f"Moderate changes. {metric_info['name']} at {avg_growth:.1f}% avg growth - evaluate in business context."
+    
+    return {
+        "name": metric_info["name"],
+        "category": metric_info["category"],
+        "description": metric_info["description"],
+        "trend": trend,
+        "latest_yoy": f"{latest_growth:+.2f}%" if latest_growth else "N/A",
+        "avg_growth": f"{avg_growth:+.2f}%",
+        "assessment": assessment,
+        "values": growth_values
+    }
+
+
+def calculate_yoy_growth(fds: List[FinancialYearInput]) -> Dict[str, Dict[str, Any]]:
     """
     Calculate Year-over-Year growth for all metrics across all years.
-    Returns metrics in descending year order (newest first).
+    Returns metrics in descending year order (newest first) with summaries.
     
     Excludes debt maturity profile metrics that are only available for latest year:
     - total_debt_maturing_lt_1y, total_debt_maturing_1_3y, total_debt_maturing_gt_3y
@@ -138,7 +280,7 @@ def calculate_yoy_growth(fds: List[FinancialYearInput]) -> Dict[str, Dict[str, O
         
         # Only include metrics that have at least one valid growth value
         if any(v is not None for v in metric_growth.values()):
-            yoy_growth[metric] = metric_growth
+            yoy_growth[metric] = generate_metric_summary(metric, metric_growth)
     
     return yoy_growth
 
