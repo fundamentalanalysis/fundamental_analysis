@@ -1,9 +1,8 @@
 # =============================================================
-# agents_config.yaml
-# Central configuration for all analytical modules and agents
+# src/app/config/agents_config.yaml
+# SINGLE SOURCE OF TRUTH for all 12 modules
 # =============================================================
 
-# Global settings
 global:
   default_score: 70
   red_penalty: 10
@@ -12,325 +11,436 @@ global:
   min_score: 0
   max_score: 100
 
-# =============================================================
-# MODULE DEFINITIONS
-# =============================================================
-
 modules:
-  # ---------------------------------------------------------
-  # BORROWINGS MODULE
-  # ---------------------------------------------------------
+
+  # 1. BORROWINGS MODULE
   borrowings:
     enabled: true
     name: "Borrowings"
-    description: "Debt structure, leverage, and borrowing risk analysis"
-    
-    agent:
-      name: "Debt Analysis Agent"
-      system_prompt: |
-        You are a senior credit analyst specializing in debt and leverage analysis.
-        Analyze the company's borrowing structure, debt sustainability, and leverage risks.
-      
-      output_sections:
-        - "Overall leverage assessment"
-        - "Key concerns (red/yellow flags)"
-        - "Positives"
-        - "Final investment/credit conclusion"
-    
+    description: "Debt structure, leverage, maturity profile, and borrowing risk analysis"
+    agent_prompt: |
+      You are a senior credit analyst specializing in debt and leverage analysis.
+      Analyze the company's borrowing structure, debt sustainability, maturity profile,
+      interest rate risk, and overall leverage risks. Provide insights on refinancing
+      risk and debt servicing capacity.
+    output_sections: ["Leverage assessment", "Debt structure", "Maturity profile", "Interest rate risk", "Key concerns", "Positives", "Conclusion"]
+    input_fields: [short_term_debt, long_term_debt, total_equity, ebitda, ebit, finance_cost, revenue, capex, cwip, total_debt_maturing_lt_1y, total_debt_maturing_1_3y, total_debt_maturing_gt_3y, weighted_avg_interest_rate, floating_rate_debt, fixed_rate_debt, interest_expense, total_debt]
+    benchmarks:
+      de_high: 1.0
+      de_moderate: 0.5
+      debt_ebitda_high: 4.0
+      debt_ebitda_moderate: 2.0
+      icr_low: 1.5
+      icr_moderate: 3.0
+      floating_high: 0.60
+      floating_moderate: 0.40
+      wacd_high: 0.10
+      wacd_moderate: 0.07
+      refinancing_high: 0.50
     metrics:
-      per_year:
-        - name: "total_debt"
-          formula: "short_term_debt + long_term_debt"
-          description: "Total debt outstanding"
-        - name: "st_debt_share"
-          formula: "short_term_debt / total_debt"
-          description: "Short-term debt as percentage of total"
-        - name: "de_ratio"
-          formula: "total_debt / total_equity"
-          description: "Debt to Equity ratio"
-        - name: "debt_ebitda"
-          formula: "total_debt / ebitda"
-          description: "Debt to EBITDA multiple"
-        - name: "interest_coverage"
-          formula: "ebit / finance_cost"
-          description: "Interest coverage ratio"
-      
-      trends:
-        - name: "debt_cagr"
-          description: "5-year debt CAGR"
-        - name: "ebitda_cagr"
-          description: "5-year EBITDA CAGR"
-        - name: "lt_debt_cagr"
-          description: "Long-term debt CAGR"
-    
+      total_debt: "short_term_debt + long_term_debt"
+      de_ratio: "total_debt / total_equity"
+      debt_ebitda: "total_debt / ebitda"
+      interest_coverage: "ebit / finance_cost"
+      st_debt_share: "short_term_debt / total_debt"
+      floating_share: "floating_rate_debt"
+      wacd: "weighted_avg_interest_rate"
+      maturity_lt_1y_pct: "total_debt_maturing_lt_1y / total_debt"
+      maturity_1_3y_pct: "total_debt_maturing_1_3y / total_debt"
+      maturity_gt_3y_pct: "total_debt_maturing_gt_3y / total_debt"
+      cwip_to_assets: "cwip / (total_equity + total_debt)"
+    trends: [debt_cagr, ebitda_cagr, lt_debt_cagr, revenue_cagr, finance_cost_cagr, st_debt_yoy_growth]
     rules:
-      # Debt Growth Rules
-      - id: "A1"
+      # A. Debt Growth & Trend Rules
+      - id: A1
         name: "Debt CAGR vs EBITDA CAGR"
-        category: "debt_growth"
-        condition: "debt_cagr > ebitda_cagr"
-        flag: "RED"
-        threshold_desc: "Debt growing faster than earnings"
-        reason_template: "Leverage increasing faster than earnings (Debt CAGR: {debt_cagr:.2f}%, EBITDA CAGR: {ebitda_cagr:.2f}%)"
-      
-      - id: "B1"
-        name: "Debt-to-Equity Threshold"
-        category: "leverage"
-        thresholds:
-          red: "> 1.0"
-          yellow: "> 0.5"
-          green: "<= 0.5"
-        metric: "de_ratio"
-        reasons:
-          red: "Highly leveraged"
-          yellow: "Moderately leveraged"
-          green: "Healthy leverage"
+        metric: debt_vs_ebitda_cagr
+        red: "> 0"
+        yellow: "-"
+        green: "<= 0"
+      - id: A3
+        name: "LT Debt Up, Revenue Flat"
+        metric: lt_debt_vs_revenue
+        red: "-"
+        yellow: "> 0"
+        green: "<= 0"
+      - id: A3b
+        name: "Capex Funded by Debt"
+        metric: cwip_to_assets
+        red: "-"
+        yellow: "-"
+        green: "> 0.10"
+      # B. Leverage Ratios
+      - id: B1
+        name: "Debt-to-Equity Ratio"
+        metric: de_ratio
+        red: "> 1.0"
+        yellow: "> 0.5"
+        green: "<= 0.5"
+      - id: B2
+        name: "Debt-to-EBITDA"
+        metric: debt_ebitda
+        red: "> 4.0"
+        yellow: "> 2.0"
+        green: "<= 2.0"
+      # C. Interest Coverage Rules
+      - id: C1
+        name: "Interest Coverage Ratio"
+        metric: interest_coverage
+        red: "< 1.5"
+        yellow: "< 3.0"
+        green: ">= 3.0"
+      - id: C2
+        name: "Finance Cost vs Debt Growth"
+        metric: finance_cost_vs_debt
+        red: "-"
+        yellow: "> 5.0"
+        green: "<= 5.0"
+      # D. Maturity Profile Rules
+      - id: D1
+        name: "Refinancing Risk"
+        metric: maturity_lt_1y_pct
+        red: "> 0.50"
+        yellow: "> 0.30"
+        green: "<= 0.30"
+      - id: D2
+        name: "Balanced Maturity"
+        metric: maturity_balance
+        red: "-"
+        yellow: "-"
+        green: "> 0"
+      # E. Interest Rate Risk
+      - id: E1
+        name: "Floating Rate Exposure"
+        metric: floating_share
+        red: "> 0.60"
+        yellow: "> 0.40"
+        green: "<= 0.40"
+      # F. Cost of Debt
+      - id: F1
+        name: "Weighted Avg Cost of Debt"
+        metric: wacd
+        red: "> 0.10"
+        yellow: "> 0.07"
+        green: "<= 0.07"
 
-  # ---------------------------------------------------------
-  # EQUITY FUNDING MIX MODULE
-  # ---------------------------------------------------------
+  # 2. EQUITY & FUNDING MIX MODULE
   equity_funding_mix:
     enabled: true
     name: "EquityFundingMix"
-    description: "Equity quality, retained earnings, dividend policy, and funding mix analysis"
-    
-    agent:
-      name: "Equity & Funding Agent"
-      system_prompt: |
-        You are a senior equity analyst specializing in capital structure and shareholder value analysis.
-        Evaluate the quality and sustainability of equity, focusing on:
-        - Earnings retention & internal capital formation
-        - Dividend payout discipline & sustainability
-        - Return on Equity (ROE)
-        - Funding mix (debt vs equity)
-        - Equity dilution signals
-        - Long-term capital structure health
-      
-      output_sections:
-        - "Overall equity quality assessment"
-        - "Retained earnings and internal capital formation"
-        - "Dividend policy sustainability"
-        - "ROE and capital efficiency"
-        - "Funding mix and dilution analysis"
-        - "Key concerns (red/yellow flags)"
-        - "Positives"
-        - "Final assessment and recommendations"
-    
-    # Industry benchmarks (configurable per industry)
+    description: "Equity quality, retained earnings, dividend policy, and funding mix"
+    agent_prompt: |
+      You are a senior equity analyst. Evaluate equity quality, retained earnings, 
+      dividend sustainability, ROE, funding mix, and dilution risks.
+    output_sections: ["Equity quality", "Retained earnings", "Dividend policy", "ROE", "Funding mix", "Concerns", "Positives"]
+    input_fields: [share_capital, reserves_and_surplus, net_worth, pat, dividend_paid, free_cash_flow, new_share_issuance, debt_equitymix]
     benchmarks:
-      generic:
-        payout_normal: 0.30
-        payout_high: 0.50
-        roe_good: 0.15
-        roe_modest: 0.10
-        dilution_warning: 0.05
-        dilution_high: 0.10
-        dividends_exceed_fcf_warning: 1.0
-        high_dividend_to_pat: 1.0
-        retained_earnings_decline_warning: 0.0
-        leverage_rising_threshold: 0.10
-    
+      payout_high: 0.50
+      roe_good: 0.15
+      roe_modest: 0.10
+      dilution_high: 0.10
     metrics:
-      per_year:
-        # Core Equity Metrics
-        - name: "retained_earnings"
-          formula: "reserves_and_surplus"
-          description: "Retained earnings (Reserves & Surplus)"
-        
-        - name: "dividend_payout_ratio"
-          formula: "abs(dividend_paid) / pat"
-          description: "Dividend payout as percentage of PAT"
-        
-        - name: "dividend_to_fcf_ratio"
-          formula: "abs(dividend_paid) / free_cash_flow"
-          description: "Dividend as percentage of Free Cash Flow"
-        
-        - name: "roe"
-          formula: "pat / avg_equity"
-          description: "Return on Equity"
-        
-        - name: "equity_dilution_pct"
-          formula: "new_share_issuance / prior_share_capital"
-          description: "Equity dilution percentage"
-        
-        # Funding Mix Metrics
-        - name: "debt_to_equity"
-          formula: "debt_equitymix / net_worth"
-          description: "Debt to Equity ratio"
-        
-        - name: "equity_ratio"
-          formula: "net_worth / (net_worth + debt_equitymix)"
-          description: "Equity as percentage of total capital"
-        
-        - name: "debt_ratio"
-          formula: "debt_equitymix / (net_worth + debt_equitymix)"
-          description: "Debt as percentage of total capital"
-      
-      trends:
-        - name: "retained_earnings_cagr"
-          description: "5-year retained earnings CAGR"
-        - name: "roe_trend"
-          description: "5-year ROE trend (slope)"
-        - name: "payout_ratio_trend"
-          description: "5-year payout ratio trend"
-        - name: "equity_cagr"
-          description: "5-year equity CAGR"
-        - name: "debt_cagr"
-          description: "5-year debt CAGR"
-        - name: "pat_cagr"
-          description: "5-year PAT CAGR"
-    
+      retained_earnings: "reserves_and_surplus"
+      dividend_payout_ratio: "abs(dividend_paid) / pat"
+      dividend_to_fcf: "abs(dividend_paid) / free_cash_flow"
+      roe: "pat / avg_equity"
+      equity_dilution_pct: "new_share_issuance / prior_share_capital"
+      debt_to_equity: "debt_equitymix / net_worth"
+      equity_ratio: "net_worth / (net_worth + debt_equitymix)"
+    trends: [retained_earnings_cagr, networth_cagr, pat_cagr, equity_cagr, debt_cagr]
     rules:
-      # A. Retained Earnings & Internal Capital Formation
-      - id: "A1"
+      - id: A1
         name: "Retained Earnings Growth"
-        category: "retained_earnings"
-        metric: "re_growth_yoy"
-        thresholds:
-          red: "< 0"
-          yellow: "< 0.05"
-          green: ">= 0.05"
-        reasons:
-          red: "Profit retention deteriorating - negative retained earnings growth"
-          yellow: "Weak internal capital formation - RE growth below 5%"
-          green: "Healthy retained earnings growth supporting internal capital formation"
-      
-      # B. ROE Quality Rules
-      - id: "B1"
-        name: "Return on Equity Threshold"
-        category: "profitability"
-        metric: "roe"
-        thresholds:
-          red: "< 0.10"
-          yellow: "< 0.15"
-          green: ">= 0.15"
-        reasons:
-          red: "Poor returns to equity holders - ROE below 10%"
-          yellow: "Moderate but acceptable ROE between 10-15%"
-          green: "Strong returns to equity holders - ROE above 15%"
-      
-      - id: "B2"
-        name: "ROE Declining Trend"
-        category: "profitability"
-        condition: "roe_declining_3y"
-        flag: "YELLOW"
-        threshold_desc: "3 consecutive years of ROE decline"
-        reason_template: "Erosion in profitability and capital efficiency - ROE declining for 3 consecutive years"
-      
-      # C. Dividend Policy & Sustainability
-      - id: "C1"
-        name: "Dividend Payout Ratio Threshold"
-        category: "dividend_policy"
-        metric: "dividend_payout_ratio"
-        thresholds:
-          red: "> 1.0"
-          yellow: "> 0.50"
-          green: "<= 0.50"
-        reasons:
-          red: "Paying more than earnings (unsustainable) - payout ratio exceeds 100%"
-          yellow: "Excessive payouts limiting reinvestment - payout ratio 50-100%"
-          green: "Normal payout discipline - payout ratio below 50%"
-      
-      - id: "C2"
-        name: "Dividend vs FCF Check"
-        category: "dividend_policy"
-        metric: "dividend_to_fcf_ratio"
-        thresholds:
-          red: "> 1.0"
-          yellow: "> 0.80"
-          green: "<= 0.80"
-        reasons:
-          red: "Paying dividends from debt/financing - dividends exceed free cash flow"
-          yellow: "Dividends consuming most of free cash flow"
-          green: "Sustainable dividend coverage from free cash flow"
-      
-      - id: "C3"
-        name: "Payout Rising While PAT Stagnant"
-        category: "dividend_policy"
-        condition: "payout_rising_pat_stagnant"
-        flag: "YELLOW"
-        threshold_desc: "Payout ratio increasing despite flat PAT"
-        reason_template: "Capital discipline risk - payout ratio rising while PAT remains stagnant"
-      
-      # D. Equity Dilution & Capital Raising
-      - id: "D1"
-        name: "Dilution Threshold"
-        category: "dilution"
-        metric: "equity_dilution_pct"
-        thresholds:
-          red: "> 0.10"
-          yellow: "> 0.05"
-          green: "<= 0.05"
-        reasons:
-          red: "Significant dilution - equity issuance exceeds 10%"
-          yellow: "Moderate dilution - equity issuance 5-10%"
-          green: "Minimal dilution - equity issuance below 5%"
-      
-      - id: "D2"
-        name: "Dilution Without Earnings Growth"
-        category: "dilution"
-        condition: "dilution_without_earnings"
-        flag: "YELLOW"
-        threshold_desc: "Dilution >5% AND PAT CAGR <5%"
-        reason_template: "Weak return on new equity capital - significant dilution without corresponding earnings growth"
-      
-      # E. Funding Mix: Debt vs Equity
-      - id: "E1"
-        name: "Debt Rising vs Equity Stagnating"
-        category: "funding_mix"
-        condition: "debt_outpacing_equity"
-        flag: "YELLOW"
-        threshold_desc: "Debt CAGR > Equity CAGR + 10%"
-        reason_template: "Higher reliance on debt - debt growing significantly faster than equity"
-      
-      - id: "E2"
-        name: "Net Worth Stagnating While Debt Rising"
-        category: "funding_mix"
-        condition: "networth_stagnant_debt_rising"
-        flag: "RED"
-        threshold_desc: "Net Worth CAGR < 0 AND Debt CAGR > 0"
-        reason_template: "Weak equity cushion with rising leverage - net worth declining while debt increases"
+        metric: re_growth_yoy
+        red: "< 0"
+        yellow: "< 0.05"
+        green: ">= 0.05"
+      - id: B1
+        name: "Return on Equity"
+        metric: roe
+        red: "< 0.10"
+        yellow: "< 0.15"
+        green: ">= 0.15"
+      - id: C1
+        name: "Dividend Payout"
+        metric: dividend_payout_ratio
+        red: "> 1.0"
+        yellow: "> 0.50"
+        green: "<= 0.50"
+      - id: D1
+        name: "Equity Dilution"
+        metric: equity_dilution_pct
+        red: "> 0.10"
+        yellow: "> 0.05"
+        green: "<= 0.05"
+      - id: E1
+        name: "Debt-to-Equity"
+        metric: debt_to_equity
+        red: "> 1.5"
+        yellow: "> 1.0"
+        green: "<= 1.0"
 
-  # ---------------------------------------------------------
-  # TEMPLATE FOR NEW MODULES (Copy and modify)
-  # ---------------------------------------------------------
-  # new_module_template:
-  #   enabled: false
-  #   name: "NewModule"
-  #   description: "Description of the module"
-  #   
-  #   agent:
-  #     name: "Agent Name"
-  #     system_prompt: |
-  #       Your agent instructions here
-  #     output_sections:
-  #       - "Section 1"
-  #       - "Section 2"
-  #   
+  # 3. LIQUIDITY MODULE
+  # liquidity:
+  #   enabled: true
+  #   name: "Liquidity"
+  #   description: "Short-term liquidity, cash position, and working capital"
+  #   agent_prompt: |
+  #     You are a liquidity analyst. Evaluate short-term solvency, cash adequacy, and working capital.
+  #   output_sections: ["Liquidity overview", "Cash position", "Working capital", "Concerns", "Assessment"]
+  #   input_fields: [cash_and_equivalents, marketable_securities, current_assets, current_liabilities, inventory, total_debt, daily_operating_expenses]
   #   benchmarks:
-  #     generic:
-  #       metric1: 0.5
-  #       metric2: 0.3
-  #   
+  #     current_ratio_low: 1.0
+  #     quick_ratio_low: 0.8
+  #     cash_ratio_low: 0.2
   #   metrics:
-  #     per_year:
-  #       - name: "metric_name"
-  #         formula: "formula_expression"
-  #         description: "What this metric measures"
-  #     trends:
-  #       - name: "trend_name"
-  #         description: "Trend description"
-  #   
+  #     current_ratio: "current_assets / current_liabilities"
+  #     quick_ratio: "(current_assets - inventory) / current_liabilities"
+  #     cash_ratio: "(cash_and_equivalents + marketable_securities) / current_liabilities"
+  #     cash_coverage_days: "cash_and_equivalents / daily_operating_expenses"
   #   rules:
-  #     - id: "R1"
-  #       name: "Rule Name"
-  #       category: "category"
-  #       metric: "metric_name"
-  #       thresholds:
-  #         red: "> value"
-  #         yellow: "> value"
-  #         green: "<= value"
-  #       reasons:
-  #         red: "Red flag reason"
-  #         yellow: "Yellow flag reason"
-  #         green: "Green flag reason"
+  #     - id: L1
+  #       name: "Current Ratio"
+  #       metric: current_ratio
+  #       red: "< 1.0"
+  #       yellow: "< 1.5"
+  #       green: ">= 1.5"
+  #     - id: L2
+  #       name: "Cash Coverage Days"
+  #       metric: cash_coverage_days
+  #       red: "< 30"
+  #       yellow: "< 90"
+  #       green: ">= 90"
+
+  # # 4. WORKING CAPITAL MODULE
+  # working_capital:
+  #   enabled: true
+  #   name: "WorkingCapital"
+  #   description: "Working capital efficiency and cash conversion cycle"
+  #   agent_prompt: |
+  #     You are a working capital analyst. Evaluate inventory, receivables, payables, and cash conversion.
+  #   output_sections: ["WC overview", "Cash cycle", "Efficiency", "Concerns", "Recommendations"]
+  #   input_fields: [trade_receivables, trade_payables, inventory_wc, revenue_wc, cogs]
+  #   benchmarks:
+  #     dso_high: 90
+  #     dio_high: 120
+  #     ccc_high: 90
+  #   metrics:
+  #     dso: "(trade_receivables / revenue_wc) * 365"
+  #     dio: "(inventory_wc / cogs) * 365"
+  #     dpo: "(trade_payables / cogs) * 365"
+  #     cash_conversion_cycle: "dso + dio - dpo"
+  #   rules:
+  #     - id: W1
+  #       name: "Cash Conversion Cycle"
+  #       metric: cash_conversion_cycle
+  #       red: "> 90"
+  #       yellow: "> 60"
+  #       green: "<= 60"
+  #     - id: W2
+  #       name: "Days Sales Outstanding"
+  #       metric: dso
+  #       red: "> 90"
+  #       yellow: "> 60"
+  #       green: "<= 60"
+
+  # # 5. CAPEX & ASSET QUALITY MODULE
+  # capex_asset_quality:
+  #   enabled: true
+  #   name: "CapexAssetQuality"
+  #   description: "Capital expenditure efficiency and asset quality"
+  #   agent_prompt: |
+  #     You are a capital allocation analyst. Evaluate capex efficiency, asset utilization, and quality.
+  #   output_sections: ["Capex analysis", "Asset utilization", "Asset quality", "Concerns", "Recommendations"]
+  #   input_fields: [net_fixed_assets, gross_block, accumulated_depreciation, cwip_asset, capex, revenue, operating_cash_flow, intangibles, goodwill]
+  #   benchmarks:
+  #     asset_turnover_low: 0.5
+  #     capex_ocf_high: 1.0
+  #   metrics:
+  #     asset_turnover: "revenue / net_fixed_assets"
+  #     capex_to_revenue: "capex / revenue"
+  #     capex_to_ocf: "capex / operating_cash_flow"
+  #     asset_age_ratio: "accumulated_depreciation / gross_block"
+  #     cwip_ratio: "cwip_asset / gross_block"
+  #   rules:
+  #     - id: C1
+  #       name: "Asset Turnover"
+  #       metric: asset_turnover
+  #       red: "< 0.5"
+  #       yellow: "< 1.0"
+  #       green: ">= 1.0"
+  #     - id: C2
+  #       name: "Capex to OCF"
+  #       metric: capex_to_ocf
+  #       red: "> 1.0"
+  #       yellow: "> 0.75"
+  #       green: "<= 0.75"
+
+  # # 6. PROFITABILITY MODULE
+  # profitability:
+  #   enabled: true
+  #   name: "Profitability"
+  #   description: "Margin analysis and earnings quality"
+  #   agent_prompt: |
+  #     You are a profitability analyst. Evaluate margin trends, earnings quality, and efficiency.
+  #   output_sections: ["Margin analysis", "Earnings quality", "Trends", "Concerns", "Outlook"]
+  #   input_fields: [revenue, ebitda, ebit, pat, operating_cash_flow]
+  #   metrics:
+  #     ebitda_margin: "ebitda / revenue"
+  #     ebit_margin: "ebit / revenue"
+  #     pat_margin: "pat / revenue"
+  #     ocf_to_pat: "operating_cash_flow / pat"
+  #   rules:
+  #     - id: P1
+  #       name: "EBITDA Margin"
+  #       metric: ebitda_margin
+  #       red: "< 0.10"
+  #       yellow: "< 0.15"
+  #       green: ">= 0.15"
+  #     - id: P2
+  #       name: "Cash Earnings Quality"
+  #       metric: ocf_to_pat
+  #       red: "< 0.50"
+  #       yellow: "< 0.80"
+  #       green: ">= 0.80"
+
+  # # 7. CASH FLOW MODULE
+  # cash_flow:
+  #   enabled: true
+  #   name: "CashFlow"
+  #   description: "Cash flow quality and sustainability"
+  #   agent_prompt: |
+  #     You are a cash flow analyst. Evaluate OCF, FCF, and cash allocation.
+  #   output_sections: ["OCF analysis", "FCF assessment", "Cash allocation", "Concerns", "Sustainability"]
+  #   input_fields: [operating_cash_flow, capex, free_cash_flow, pat, total_debt]
+  #   metrics:
+  #     fcf: "operating_cash_flow - capex"
+  #     fcf_margin: "fcf / revenue"
+  #     ocf_to_debt: "operating_cash_flow / total_debt"
+  #     fcf_to_pat: "fcf / pat"
+  #   rules:
+  #     - id: CF1
+  #       name: "Free Cash Flow"
+  #       metric: fcf
+  #       red: "< 0"
+  #       yellow: "declining"
+  #       green: ">= 0 and growing"
+  #     - id: CF2
+  #       name: "OCF to Debt"
+  #       metric: ocf_to_debt
+  #       red: "< 0.15"
+  #       yellow: "< 0.25"
+  #       green: ">= 0.25"
+
+  # # 8. SOLVENCY MODULE
+  # solvency:
+  #   enabled: true
+  #   name: "Solvency"
+  #   description: "Long-term solvency and financial stability"
+  #   agent_prompt: |
+  #     You are a solvency analyst. Evaluate long-term stability and debt sustainability.
+  #   output_sections: ["Solvency overview", "Debt sustainability", "Capital structure", "Risks", "Outlook"]
+  #   input_fields: [total_assets, total_liabilities, total_equity, long_term_debt, ebitda, interest_expense]
+  #   metrics:
+  #     equity_to_assets: "total_equity / total_assets"
+  #     debt_to_assets: "total_liabilities / total_assets"
+  #     lt_debt_to_equity: "long_term_debt / total_equity"
+  #   rules:
+  #     - id: S1
+  #       name: "Equity to Assets"
+  #       metric: equity_to_assets
+  #       red: "< 0.30"
+  #       yellow: "< 0.40"
+  #       green: ">= 0.40"
+
+  # # 9. VALUATION MODULE
+  # valuation:
+  #   enabled: true
+  #   name: "Valuation"
+  #   description: "Relative and intrinsic valuation metrics"
+  #   agent_prompt: |
+  #     You are a valuation analyst. Evaluate relative valuation and market expectations.
+  #   output_sections: ["Valuation overview", "Relative metrics", "Historical", "Observations", "Conclusion"]
+  #   input_fields: [market_cap, share_price, pat, book_value, ebitda, revenue, free_cash_flow, dividends_per_share]
+  #   metrics:
+  #     pe_ratio: "market_cap / pat"
+  #     pb_ratio: "market_cap / book_value"
+  #     ev_ebitda: "(market_cap + debt - cash) / ebitda"
+  #     fcf_yield: "free_cash_flow / market_cap"
+  #   rules:
+  #     - id: V1
+  #       name: "P/E Ratio"
+  #       metric: pe_ratio
+  #       red: "> 40"
+  #       yellow: "> 25"
+  #       green: "<= 25"
+
+  # # 10. GROWTH MODULE
+  # growth:
+  #   enabled: true
+  #   name: "Growth"
+  #   description: "Revenue and earnings growth analysis"
+  #   agent_prompt: |
+  #     You are a growth analyst. Evaluate revenue and earnings trajectory.
+  #   output_sections: ["Growth overview", "Revenue trajectory", "Earnings momentum", "Sustainability", "Outlook"]
+  #   input_fields: [revenue, pat, ebitda]
+  #   metrics:
+  #     revenue_growth: "(revenue_t - revenue_t1) / revenue_t1"
+  #     pat_growth: "(pat_t - pat_t1) / pat_t1"
+  #     ebitda_growth: "(ebitda_t - ebitda_t1) / ebitda_t1"
+  #   trends: [revenue_cagr, pat_cagr, ebitda_cagr]
+  #   rules:
+  #     - id: G1
+  #       name: "Revenue CAGR"
+  #       metric: revenue_cagr
+  #       red: "< 0"
+  #       yellow: "< 0.10"
+  #       green: ">= 0.10"
+
+  # # 11. RISK ASSESSMENT MODULE
+  # risk_assessment:
+  #   enabled: true
+  #   name: "RiskAssessment"
+  #   description: "Financial and operational risk evaluation"
+  #   agent_prompt: |
+  #     You are a risk analyst. Evaluate financial leverage, operational risk, and overall risk.
+  #   output_sections: ["Risk overview", "Financial risk", "Operational risk", "Mitigation", "Rating"]
+  #   input_fields: [risk_ebit, risk_interest, risk_net_income, risk_operating_cash_flow, risk_capex, risk_fixed_assets, risk_net_debt, risk_revenue, risk_assets_total]
+  #   metrics:
+  #     financial_leverage: "risk_assets_total / equity"
+  #     interest_burden: "risk_interest / risk_ebit"
+  #     capex_intensity: "risk_capex / risk_revenue"
+  #   rules:
+  #     - id: R1
+  #       name: "Financial Leverage"
+  #       metric: financial_leverage
+  #       red: "> 3.0"
+  #       yellow: "> 2.0"
+  #       green: "<= 2.0"
+
+  # # 12. CREDIT RATING MODULE
+  # credit_rating:
+  #   enabled: true
+  #   name: "CreditRating"
+  #   description: "Credit quality and rating assessment"
+  #   agent_prompt: |
+  #     You are a credit rating analyst. Assess creditworthiness and implied rating.
+  #   output_sections: ["Credit overview", "Key metrics", "Strengths", "Weaknesses", "Rating"]
+  #   input_fields: [total_debt, ebitda, interest_expense, operating_cash_flow, total_equity]
+  #   metrics:
+  #     debt_ebitda: "total_debt / ebitda"
+  #     ebitda_interest: "ebitda / interest_expense"
+  #     ffo_debt: "(ocf + interest) / total_debt"
+  #   rules:
+  #     - id: CR1
+  #       name: "Debt to EBITDA"
+  #       metric: debt_ebitda
+  #       red: "> 5.0"
+  #       yellow: "> 3.0"
+  #       green: "<= 3.0"
+  #     - id: CR2
+  #       name: "Interest Coverage"
+  #       metric: ebitda_interest
+  #       red: "< 2.0"
+  #       yellow: "< 4.0"
+  #       green: ">= 4.0"

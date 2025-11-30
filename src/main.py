@@ -1,13 +1,14 @@
 # =============================================================
-# main.py - Multi-Module Analytical Engine
+# main.py - Multi-Module Analytical Engine v3.0
+# SINGLE ENTRY POINT using YAML-driven GenericAgent
 # =============================================================
 
 import os
 import sys
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 # -------------------------------------------
 # FIX PATH
@@ -16,180 +17,130 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(ROOT)
 
 # -------------------------------------------
-# IMPORT MODULES
+# IMPORT SCHEMAS & AGENTS
 # -------------------------------------------
-# Borrowings Module
-from src.app.borrowing_module.debt_models import (
-    BorrowingsInput,
-    YearFinancialInput,
-    IndustryBenchmarks,
-    CovenantLimits,
+from src.app.schemas import (
+    FinancialYearInput,
+    FinancialData,
+    AnalyzeRequest,
 )
-from src.app.borrowing_module.debt_orchestrator import run_borrowings_module
-
-# Equity Funding Mix Module
-from src.app.equity_funding_module.equity_models import (
-    EquityFundingInput,
-    EquityYearFinancialInput,
-    EquityBenchmarks,
-)
-from src.app.equity_funding_module.equity_orchestrator import run_equity_funding_module
-
-# Module Registry
-from src.app.module_registry import (
-    initialize_registry,
-    run_module,
-    get_available_modules,
-    get_module_info,
-    list_all_modules_info,
-)
+from src.app.agents import AgentOrchestrator, GenericAgent
 
 
 # ---------------------------------------------------------
-# REQUEST MODELS - Unified Financial Input
+# FASTAPI APP WITH LIFESPAN
 # ---------------------------------------------------------
 
-class FinancialYearInput(BaseModel):
-    """Comprehensive financial year data supporting all modules"""
-    year: int
-    
-    # Debt/Borrowings data
-    short_term_debt: float = 0
-    long_term_debt: float = 0
-    total_equity: float = 0
-    revenue: float = 0
-    ebitda: float = 0
-    ebit: float = 0
-    finance_cost: float = 0
-    capex: float = 0
-    cwip: float = 0
-    
-    # Debt maturity profile
-    total_debt_maturing_lt_1y: Optional[float] = None
-    total_debt_maturing_1_3y: Optional[float] = None
-    total_debt_maturing_gt_3y: Optional[float] = None
-    weighted_avg_interest_rate: Optional[float] = None
-    floating_rate_debt: Optional[float] = None
-    fixed_rate_debt: Optional[float] = None
-    
-    # Equity & Funding Mix data
-    share_capital: float = 0
-    reserves_and_surplus: float = 0
-    net_worth: float = 0
-    pat: float = 0
-    dividend_paid: float = 0
-    new_share_issuance: float = 0
-    debt_equitymix: float = 0
-    free_cash_flow: Optional[float] = None
+# Global orchestrator instance
+orchestrator: AgentOrchestrator = None
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize orchestrator on startup, cleanup on shutdown"""
+    global orchestrator
+    orchestrator = AgentOrchestrator()
+    print(f"Initialized {len(orchestrator.list_modules())} modules from YAML config")
+    yield
+    # Cleanup on shutdown (if needed)
+    print("Shutting down...")
 
-class FinancialData(BaseModel):
-    financial_years: List[FinancialYearInput]
-
-
-class AnalyzeRequest(BaseModel):
-    """Request model for analysis"""
-    company: str
-    financial_data: FinancialData
-    modules: Optional[List[str]] = None  # Optional: specify which modules to run
-
-
-# ---------------------------------------------------------
-# FASTAPI APP
-# ---------------------------------------------------------
 app = FastAPI(
     title="Fundamental Analysis Multi-Agent Engine",
-    version="2.0",
-    description="API for comprehensive financial analysis with configurable modules"
+    version="3.0",
+    description="API for comprehensive financial analysis with 12 YAML-configurable modules",
+    lifespan=lifespan
 )
-
-
-# Initialize registry on startup
-@app.on_event("startup")
-async def startup_event():
-    initialize_registry()
 
 
 # ---------------------------------------------------------
 # HELPER FUNCTIONS
 # ---------------------------------------------------------
 
-def build_borrowings_input(company: str, fds: List[FinancialYearInput]) -> BorrowingsInput:
-    """Build BorrowingsInput from unified financial data"""
-    yfis = []
-    for fy in fds:
-        yfi = YearFinancialInput(
-            year=fy.year,
-            short_term_debt=fy.short_term_debt,
-            long_term_debt=fy.long_term_debt,
-            total_equity=fy.total_equity,
-            revenue=fy.revenue,
-            ebitda=fy.ebitda,
-            ebit=fy.ebit,
-            finance_cost=fy.finance_cost,
-            capex=fy.capex,
-            cwip=fy.cwip,
-            total_debt_maturing_lt_1y=fy.total_debt_maturing_lt_1y,
-            total_debt_maturing_1_3y=fy.total_debt_maturing_1_3y,
-            total_debt_maturing_gt_3y=fy.total_debt_maturing_gt_3y,
-            weighted_avg_interest_rate=fy.weighted_avg_interest_rate,
-            floating_rate_debt=fy.floating_rate_debt,
-            fixed_rate_debt=fy.fixed_rate_debt,
-        )
-        yfis.append(yfi)
+def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
+    """Convert FinancialYearInput to flat dictionary for GenericAgent"""
+    data = fy.model_dump()
     
-    return BorrowingsInput(
-        company_id=company,
-        industry_code="GENERAL",
-        financials_5y=yfis,
-        industry_benchmarks=IndustryBenchmarks(
-            target_de_ratio=1.5,
-            max_safe_de_ratio=2.5,
-            max_safe_debt_ebitda=4.0,
-            min_safe_icr=2.0,
-        ),
-        covenant_limits=CovenantLimits(
-            de_ratio_limit=3.0,
-            icr_limit=2.0,
-            debt_ebitda_limit=4.0,
-        ),
-    )
+    # Add computed fields
+    data["total_debt"] = data.get("short_term_debt", 0) + data.get("long_term_debt", 0)
+    
+    # Map revenue_wc if not set
+    if data.get("revenue_wc", 0) == 0:
+        data["revenue_wc"] = data.get("revenue", 0)
+    
+    # Map inventory_wc if not set  
+    if data.get("inventory_wc", 0) == 0:
+        data["inventory_wc"] = data.get("inventory", 0)
+        
+    return data
 
 
-def build_equity_funding_input(company: str, fds: List[FinancialYearInput]) -> EquityFundingInput:
-    """Build EquityFundingInput from unified financial data"""
-    efis = []
-    for fy in fds:
-        # Calculate debt for funding mix if not provided
-        debt = fy.debt_equitymix
-        if debt == 0:
-            debt = fy.short_term_debt + fy.long_term_debt
-        
-        # Calculate net_worth if not provided
-        net_worth = fy.net_worth
-        if net_worth == 0:
-            net_worth = fy.share_capital + fy.reserves_and_surplus
-        
-        efi = EquityYearFinancialInput(
-            year=fy.year,
-            share_capital=fy.share_capital,
-            reserves_and_surplus=fy.reserves_and_surplus,
-            net_worth=net_worth,
-            pat=fy.pat,
-            dividend_paid=fy.dividend_paid,
-            free_cash_flow=fy.free_cash_flow,
-            new_share_issuance=fy.new_share_issuance,
-            debt_equitymix=debt,
-            total_equity=fy.total_equity,
-        )
-        efis.append(efi)
+def prepare_historical_data(fds: List[FinancialYearInput]) -> List[Dict[str, float]]:
+    """Convert list of financial years to historical data format"""
+    # Sort by year ascending (oldest first) for CAGR calculations
+    sorted_fds = sorted(fds, key=lambda x: x.year)
+    return [financial_year_to_dict(fy) for fy in sorted_fds]
+
+
+def calculate_yoy_growth(fds: List[FinancialYearInput]) -> Dict[str, Dict[str, Optional[float]]]:
+    """
+    Calculate Year-over-Year growth for all metrics across all years.
+    Returns metrics in descending year order (newest first).
     
-    return EquityFundingInput(
-        company_id=company,
-        industry_code="GENERAL",
-        financials_5y=efis,
-        industry_benchmarks=EquityBenchmarks(),
-    )
+    Excludes debt maturity profile metrics that are only available for latest year:
+    - total_debt_maturing_lt_1y, total_debt_maturing_1_3y, total_debt_maturing_gt_3y
+    - weighted_avg_interest_rate, floating_rate_debt, fixed_rate_debt
+    """
+    # Metrics to exclude (only available for latest year)
+    EXCLUDED_METRICS = {
+        'total_debt_maturing_lt_1y',
+        'total_debt_maturing_1_3y', 
+        'total_debt_maturing_gt_3y',
+        'weighted_avg_interest_rate',
+        'floating_rate_debt',
+        'fixed_rate_debt',
+        'year',  # Not a metric
+    }
+    
+    # Sort by year descending (newest first for output)
+    sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+    
+    if len(sorted_fds) < 2:
+        return {}
+    
+    # Convert to dicts
+    years_data = [financial_year_to_dict(fy) for fy in sorted_fds]
+    
+    # Get all metric names from first year (excluding non-metrics)
+    all_metrics = [
+        key for key in years_data[0].keys() 
+        if key not in EXCLUDED_METRICS and isinstance(years_data[0].get(key), (int, float, type(None)))
+    ]
+    
+    yoy_growth = {}
+    
+    for metric in all_metrics:
+        metric_growth = {}
+        
+        for i in range(len(years_data) - 1):
+            current_year = sorted_fds[i].year
+            current_val = years_data[i].get(metric)
+            prev_val = years_data[i + 1].get(metric)
+            
+            # Format year as "MAR YYYY" (fiscal year ending March)
+            year_label = f"MAR {current_year}"
+            
+            # Calculate YoY growth %
+            if current_val is not None and prev_val is not None and prev_val != 0:
+                growth_pct = round(((current_val - prev_val) / abs(prev_val)) * 100, 2)
+                metric_growth[year_label] = growth_pct
+            else:
+                metric_growth[year_label] = None
+        
+        # Only include metrics that have at least one valid growth value
+        if any(v is not None for v in metric_growth.values()):
+            yoy_growth[metric] = metric_growth
+    
+    return yoy_growth
 
 
 # ---------------------------------------------------------
@@ -201,33 +152,61 @@ def root():
     """API root with available endpoints"""
     return {
         "message": "Fundamental Analysis Multi-Agent Engine",
-        "version": "2.0",
+        "version": "3.0",
+        "architecture": "YAML-driven GenericAgent with single entry point",
         "endpoints": {
-            "/analyze": "POST - Run analysis with specified modules",
-            "/analyze/borrowings": "POST - Run borrowings analysis only",
-            "/analyze/equity-funding": "POST - Run equity funding mix analysis only",
-            "/modules": "GET - List available modules",
-            "/modules/{module_key}": "GET - Get module information",
+            "/analyze": "POST - Run analysis with specified modules (or all)",
+            "/analyze/{module_id}": "POST - Run specific module analysis",
+            "/modules": "GET - List all available modules",
+            "/modules/{module_id}": "GET - Get module details",
+            "/modules/{module_id}/required-fields": "GET - Get required input fields",
+            "/reload-config": "POST - Reload YAML configuration",
         }
     }
 
 
 @app.get("/modules")
-def list_modules():
-    """List all available analytical modules"""
+def list_modules(include_disabled: bool = False):
+    """List all available analytical modules from YAML config"""
+    modules = orchestrator.list_modules(include_disabled=include_disabled)
     return {
-        "available_modules": get_available_modules(),
-        "all_modules": list_all_modules_info(),
+        "total_modules": len(modules),
+        "modules": [m.model_dump() for m in modules],
     }
 
 
-@app.get("/modules/{module_key}")
-def get_module(module_key: str):
+@app.get("/modules/{module_id}")
+def get_module(module_id: str):
     """Get information about a specific module"""
-    info = get_module_info(module_key)
-    if "error" in info:
-        raise HTTPException(status_code=404, detail=info["error"])
-    return info
+    info = orchestrator.get_module_info(module_id)
+    if not info:
+        raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
+    return info.model_dump()
+
+
+@app.get("/modules/{module_id}/required-fields")
+def get_module_fields(module_id: str):
+    """Get required input fields for a module"""
+    info = orchestrator.get_module_info(module_id)
+    if not info:
+        raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
+    return {
+        "module_id": module_id,
+        "module_name": info.name,
+        "required_fields": info.input_fields,
+    }
+
+
+@app.post("/reload-config")
+def reload_config():
+    """Reload YAML configuration (useful after editing agents_config.yaml)"""
+    orchestrator.reload_config()
+    modules = orchestrator.list_modules()
+    return {
+        "status": "success",
+        "message": "Configuration reloaded",
+        "modules_loaded": len(modules),
+    }
 
 
 @app.post("/analyze")
@@ -236,72 +215,76 @@ def analyze(req: AnalyzeRequest):
     Run comprehensive analysis with multiple modules.
     
     If no modules specified, runs all enabled modules.
+    Includes YoY growth metrics for all years (descending order).
     """
     try:
         company = req.company.upper()
         fds = req.financial_data.financial_years
         
+        # Use most recent year for current data
+        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+        current_data = financial_year_to_dict(sorted_fds[0])
+        historical_data = prepare_historical_data(fds)
+        
+        # Calculate YoY growth for all metrics
+        yoy_growth = calculate_yoy_growth(fds)
+        
         # Determine which modules to run
-        modules_to_run = req.modules if req.modules else get_available_modules()
-        
-        results = {}
-        
-        for module_key in modules_to_run:
-            try:
-                if module_key == "borrowings":
-                    input_data = build_borrowings_input(company, fds)
-                    result = run_borrowings_module(input_data)
-                    results["borrowings"] = result.model_dump()
-                    
-                elif module_key == "equity_funding_mix":
-                    input_data = build_equity_funding_input(company, fds)
-                    result = run_equity_funding_module(input_data)
-                    results["equity_funding_mix"] = result.model_dump()
-                    
-                else:
-                    results[module_key] = {"error": f"Module '{module_key}' not implemented"}
-                    
-            except Exception as e:
-                results[module_key] = {"error": str(e)}
+        if req.modules:
+            result = orchestrator.run_multiple(
+                module_ids=req.modules,
+                data=current_data,
+                historical_data=historical_data,
+                generate_narrative=req.generate_narrative
+            )
+        else:
+            result = orchestrator.run_all(
+                data=current_data,
+                historical_data=historical_data,
+                generate_narrative=req.generate_narrative
+            )
         
         return {
             "company": company,
-            "modules_analyzed": list(results.keys()),
-            "results": results,
+            "analysis": result.model_dump(),
+            "yoy_growth": {"metrics": yoy_growth},
         }
         
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/analyze/borrowings")
-def analyze_borrowings(req: AnalyzeRequest):
-    """Run borrowings analysis only"""
+@app.post("/analyze/{module_id}")
+def analyze_single_module(module_id: str, req: AnalyzeRequest):
+    """Run analysis for a specific module with YoY growth metrics"""
     try:
         company = req.company.upper()
         fds = req.financial_data.financial_years
         
-        input_data = build_borrowings_input(company, fds)
-        result = run_borrowings_module(input_data)
+        # Use most recent year for current data
+        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+        current_data = financial_year_to_dict(sorted_fds[0])
+        historical_data = prepare_historical_data(fds)
         
-        return result.model_dump()
+        # Calculate YoY growth for all metrics
+        yoy_growth = calculate_yoy_growth(fds)
         
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@app.post("/analyze/equity-funding")
-def analyze_equity_funding(req: AnalyzeRequest):
-    """Run equity funding mix analysis only"""
-    try:
-        company = req.company.upper()
-        fds = req.financial_data.financial_years
+        result = orchestrator.run(
+            module_id=module_id,
+            data=current_data,
+            historical_data=historical_data,
+            generate_narrative=req.generate_narrative
+        )
         
-        input_data = build_equity_funding_input(company, fds)
-        result = run_equity_funding_module(input_data)
+        return {
+            "company": company,
+            "module": module_id,
+            "analysis": result.model_dump(),
+            "yoy_growth": {"metrics": yoy_growth},
+        }
         
-        return result.model_dump()
-        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

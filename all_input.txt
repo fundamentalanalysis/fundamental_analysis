@@ -67,7 +67,7 @@
         "dividends_per_share": null,
         "forecasted_pat": null,
         "forecasted_dividend": null,
-        "sector": null
+        "sector": null,
 
 		 "risk_ebit": 238040,
 		 "risk_interest": 23118,
@@ -148,7 +148,7 @@
         "dividends_per_share": null,
         "forecasted_pat": null,
         "forecasted_dividend": null,
-        "sector": null
+        "sector": null,
 		
 		 "risk_ebit": 220900,
 		 "risk_interest": 19571,
@@ -229,7 +229,7 @@
         "dividends_per_share": null,
         "forecasted_pat": null,
         "forecasted_dividend": null,
-        "sector": null
+        "sector": null,
 		
 		 "risk_ebit": 207500,
 		 "risk_interest": 14584,
@@ -310,7 +310,7 @@
         "dividends_per_share": null,
         "forecasted_pat": null,
         "forecasted_dividend": null,
-        "sector": null
+        "sector": null,
 		
 		 "risk_ebit": 195300,
 		 "risk_interest": 21189,
@@ -391,7 +391,7 @@
         "dividends_per_share": null,
         "forecasted_pat": null,
         "forecasted_dividend": null,
-        "sector": null
+        "sector": null,
 		
 		 "risk_ebit": 185000,
 		 "risk_interest": 22027,

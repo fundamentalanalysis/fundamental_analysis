@@ -1,26 +1,16 @@
-# Configurable Multi-Agent Financial Analysis System
+# Module Configuration Guide v3.0
 
-## Overview
+## New Architecture: YAML-Driven GenericAgent
 
-This system provides a modular, configurable framework for financial analysis with LLM-powered agents. Each module focuses on a specific aspect of fundamental analysis (e.g., Borrowings, Equity & Funding Mix, Liquidity, etc.).
+The system now uses a **single source of truth** (YAML) with a **single GenericAgent class** that handles all 12 modules.
 
-## Architecture
+### Key Benefits:
+- **1 YAML config file** - All modules defined in one place
+- **1 GenericAgent class** - No duplicate code per module
+- **1 AgentOrchestrator** - Single entry point for all analysis
+- **Add new module** - Just add to YAML, no code changes needed
 
-```
-src/app/
-├── config/
-│   ├── __init__.py          # Config exports
-│   ├── config_loader.py     # YAML configuration loader
-│   └── agents_config.yaml   # Central module configuration
-├── base/
-│   ├── __init__.py
-│   ├── base_agent.py        # Base agent class and registry
-│   └── base_models.py       # Shared data models
-├── borrowing_module/        # Debt analysis module
-├── equity_funding_module/   # Equity & funding mix module
-├── module_registry.py       # Module registration hub
-└── config.py                # LLM/OpenAI configuration
-```
+---
 
 ## Quick Start
 
@@ -31,79 +21,94 @@ cd fundamental_analysis
 python -m src.main
 ```
 
-The API will be available at `http://localhost:8000`
+API available at `http://localhost:8000`
 
-### Endpoints
+### Run Analysis via API
 
-- `GET /` - API information
-- `GET /modules` - List available modules
-- `GET /modules/{module_key}` - Get module info
-- `POST /analyze` - Run all modules
-- `POST /analyze/borrowings` - Run borrowings module only
-- `POST /analyze/equity-funding` - Run equity funding module only
+```bash
+# Run single module
+POST /analyze/equity_funding_mix
+{
+    "company": "ACME",
+    "financial_data": {...}
+}
 
-## Configuration System
+# Run multiple modules
+POST /analyze
+{
+    "company": "ACME",
+    "modules": ["borrowings", "equity_funding_mix", "liquidity"],
+    "financial_data": {...}
+}
 
-### agents_config.yaml Structure
-
-```yaml
-# Global scoring settings
-global:
-  default_score: 70
-  red_penalty: 10
-  yellow_penalty: 5
-  green_bonus: 1
-  min_score: 0
-  max_score: 100
-
-modules:
-  module_key:
-    enabled: true
-    name: "Module Display Name"
-    description: "What this module analyzes"
-    
-    agent:
-      name: "Agent Name"
-      system_prompt: |
-        LLM instructions for narrative generation
-      output_sections:
-        - "Section 1"
-        - "Section 2"
-    
-    benchmarks:
-      generic:
-        metric1: 0.5
-        metric2: 0.3
-    
-    metrics:
-      per_year:
-        - name: "metric_name"
-          formula: "calculation_formula"
-          description: "What this measures"
-      trends:
-        - name: "trend_name"
-          description: "Trend description"
-    
-    rules:
-      - id: "R1"
-        name: "Rule Name"
-        category: "category"
-        metric: "metric_name"
-        thresholds:
-          red: "> value"
-          yellow: "> value"
-          green: "<= value"
-        reasons:
-          red: "Red flag reason"
-          yellow: "Yellow flag reason"
-          green: "Green flag reason"
+# Run ALL modules
+POST /analyze
+{
+    "company": "ACME",
+    "financial_data": {...}
+}
 ```
+
+### Run Analysis via Python
+
+```python
+from src.app.agents import AgentOrchestrator, GenericAgent
+
+# Using orchestrator (recommended)
+orchestrator = AgentOrchestrator()
+result = orchestrator.run("equity_funding_mix", data)
+
+# Or run all modules
+results = orchestrator.run_all(data)
+
+# Direct agent usage
+agent = GenericAgent("profitability")
+result = agent.analyze(data)
+```
+
+---
+
+## File Structure (Simplified)
+
+```
+src/app/
+├── config/
+│   ├── agents_config.yaml   # ALL 12 modules defined here
+│   ├── config_loader.py     # YAML loader utilities
+│   └── __init__.py          # Exports
+├── agents/
+│   ├── generic_agent.py     # SINGLE class for ALL modules
+│   ├── agent_orchestrator.py # SINGLE entry point
+│   └── __init__.py          # Exports
+└── ...
+```
+
+**That's it!** No separate folders per module. No 6 files per module.
+
+---
+
+## All 12 Modules
+
+| Module ID | Name | Description |
+|-----------|------|-------------|
+| `borrowings` | Borrowings | Debt structure, leverage, and borrowing risk |
+| `equity_funding_mix` | Equity Funding Mix | Equity quality, retained earnings, ROE |
+| `liquidity` | Liquidity | Short-term liquidity, cash position |
+| `working_capital` | Working Capital | WC efficiency, cash conversion cycle |
+| `capex_asset_quality` | Capex Asset Quality | Capital expenditure, asset utilization |
+| `profitability` | Profitability | Margin analysis, earnings quality |
+| `cash_flow` | Cash Flow | OCF, FCF, cash sustainability |
+| `solvency` | Solvency | Long-term solvency, financial stability |
+| `valuation` | Valuation | P/E, P/B, EV/EBITDA metrics |
+| `growth` | Growth | Revenue and earnings trajectory |
+| `risk_assessment` | Risk Assessment | Financial and operational risk |
+| `credit_rating` | Credit Rating | Credit quality assessment |
+
+---
 
 ## Adding a New Module
 
-### Step 1: Add Module Configuration
-
-Edit `src/app/config/agents_config.yaml`:
+### Step 1: Add to agents_config.yaml
 
 ```yaml
 modules:
@@ -112,329 +117,206 @@ modules:
   my_new_module:
     enabled: true
     name: "MyNewModule"
-    description: "Description of the analysis"
-    
-    agent:
-      name: "My New Agent"
-      system_prompt: |
-        You are an expert analyst...
-      output_sections:
-        - "Overview"
-        - "Key Findings"
-        - "Recommendations"
-    
+    description: "What this module does"
+    agent_prompt: |
+      You are an expert analyst for this specific domain...
+    output_sections: ["Section 1", "Section 2", "Conclusion"]
+    input_fields: [field1, field2, field3]
     benchmarks:
-      generic:
-        threshold1: 0.5
-    
+      threshold_high: 1.0
+      threshold_low: 0.5
     metrics:
-      per_year:
-        - name: "my_metric"
-          formula: "field1 / field2"
-          description: "Description"
-      trends:
-        - name: "my_cagr"
-          description: "5-year CAGR"
-    
+      metric_1: "field1 / field2"
+      metric_2: "field2 + field3"
     rules:
-      - id: "N1"
-        name: "My Rule"
-        category: "my_category"
-        metric: "my_metric"
-        thresholds:
-          red: "> 1.0"
-          yellow: "> 0.5"
-          green: "<= 0.5"
-        reasons:
-          red: "Critical issue"
-          yellow: "Warning"
-          green: "Healthy"
+      - id: M1
+        name: "Rule Name"
+        metric: metric_1
+        red: "> 1.0"
+        yellow: "> 0.5"
+        green: "<= 0.5"
 ```
 
-### Step 2: Create Module Folder
+### Step 2: Add Metric Calculation (if complex)
 
-Create `src/app/my_new_module/` with these files:
-
-1. `__init__.py`
-2. `models.py` - Data models
-3. `metrics.py` - Metric calculations
-4. `trend.py` - Trend calculations
-5. `rules.py` - Rule engine
-6. `llm.py` - LLM narrative generation
-7. `orchestrator.py` - Main orchestration
-
-### Step 3: Implement the Module
-
-#### models.py
-```python
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-
-class MyYearFinancialInput(BaseModel):
-    year: int
-    field1: float = 0
-    field2: float = 0
-    # Add more fields
-
-class MyBenchmarks(BaseModel):
-    threshold1: float = 0.5
-
-class MyModuleInput(BaseModel):
-    company_id: str
-    industry_code: str = "GENERAL"
-    financials_5y: List[MyYearFinancialInput]
-    benchmarks: MyBenchmarks = MyBenchmarks()
-
-class MyRuleResult(BaseModel):
-    rule_id: str
-    rule_name: str
-    flag: str
-    value: Optional[float] = None
-    threshold: str
-    reason: str
-
-class MyModuleOutput(BaseModel):
-    module: str = "MyNewModule"
-    sub_score_adjusted: int
-    analysis_narrative: List[str]
-    red_flags: List[Dict[str, Any]]
-    positive_points: List[str]
-    rule_results: List[MyRuleResult]
-    metrics: Dict[str, Any]
-```
-
-#### metrics.py
-```python
-from typing import Dict, List
-
-def safe_div(a, b):
-    return a / b if b and b != 0 else None
-
-def compute_per_year_metrics(financials) -> Dict[int, dict]:
-    metrics = {}
-    sorted_fin = sorted(financials, key=lambda x: x.year)
-    
-    for f in sorted_fin:
-        metrics[f.year] = {
-            "year": f.year,
-            "my_metric": safe_div(f.field1, f.field2),
-            # Add more metrics
-        }
-    
-    return metrics
-```
-
-#### rules.py
-```python
-from typing import List, Dict
-from .models import MyRuleResult, MyBenchmarks
-
-def make_rule(flag, rule_id, name, value, threshold, reason):
-    return MyRuleResult(
-        rule_id=rule_id,
-        rule_name=name,
-        flag=flag,
-        value=value,
-        threshold=threshold,
-        reason=reason,
-    )
-
-def apply_rules(financials, metrics, trends, benchmarks) -> List[MyRuleResult]:
-    results = []
-    last_year = max(metrics.keys())
-    m = metrics[last_year]
-    
-    # Example rule
-    my_metric = m.get("my_metric")
-    if my_metric is not None:
-        if my_metric > 1.0:
-            results.append(make_rule("RED", "N1", "My Rule", my_metric, "> 1.0", "Critical"))
-        elif my_metric > 0.5:
-            results.append(make_rule("YELLOW", "N1", "My Rule", my_metric, "0.5-1.0", "Warning"))
-        else:
-            results.append(make_rule("GREEN", "N1", "My Rule", my_metric, "<= 0.5", "Healthy"))
-    
-    return results
-```
-
-#### orchestrator.py
-```python
-from collections import Counter
-from .metrics import compute_per_year_metrics
-from .trend import compute_trend_metrics
-from .rules import apply_rules
-from .llm import generate_llm_narrative
-from .models import MyModuleInput, MyModuleOutput
-
-def compute_sub_score(rule_results):
-    c = Counter([r.flag for r in rule_results])
-    score = 70 - 10 * c.get("RED", 0) - 5 * c.get("YELLOW", 0) + c.get("GREEN", 0)
-    return max(0, min(100, score))
-
-def run_my_new_module(input_data: MyModuleInput) -> MyModuleOutput:
-    per_year_metrics = compute_per_year_metrics(input_data.financials_5y)
-    trend_metrics = compute_trend_metrics(input_data.financials_5y, per_year_metrics)
-    rule_results = apply_rules(
-        input_data.financials_5y, per_year_metrics, trend_metrics, input_data.benchmarks
-    )
-    
-    score = compute_sub_score(rule_results)
-    # ... rest of orchestration
-    
-    return MyModuleOutput(
-        module="MyNewModule",
-        sub_score_adjusted=score,
-        # ... other fields
-    )
-```
-
-### Step 4: Register the Module
-
-Edit `src/app/module_registry.py`:
+If your metrics need special calculation logic, add a method to `generic_agent.py`:
 
 ```python
-from src.app.my_new_module.orchestrator import run_my_new_module
-
-def initialize_registry():
-    # ... existing registrations ...
+def _calc_my_new_module_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
+    """Calculate my_new_module metrics"""
+    field1 = data.get("field1", 0)
+    field2 = data.get("field2", 1)
+    field3 = data.get("field3", 0)
     
-    AgentRegistry.register(
-        module_key="my_new_module",
-        runner=run_my_new_module
-    )
+    return {
+        "metric_1": self._safe_div(field1, field2),
+        "metric_2": field2 + field3,
+    }
 ```
 
-### Step 5: Add to Main API
-
-Edit `src/main.py` to add:
-1. Import statements
-2. Input builder function
-3. API endpoint
-
-## Existing Modules
-
-### 1. Borrowings Module (`borrowings`)
-Analyzes debt structure, leverage, and borrowing risk.
-
-**Key Metrics:**
-- Debt-to-Equity ratio
-- Debt-to-EBITDA
-- Interest coverage ratio
-- Short-term debt share
-- Floating rate exposure
-
-### 2. Equity Funding Mix Module (`equity_funding_mix`)
-Analyzes equity quality, retained earnings, dividend policy, and capital structure.
-
-**Key Metrics:**
-- Return on Equity (ROE)
-- Retained earnings growth
-- Dividend payout ratio
-- Dividend to FCF ratio
-- Equity dilution percentage
-- Debt-to-Equity ratio
-- Equity ratio
-
-**Rule Categories:**
-- A: Retained Earnings & Internal Capital Formation
-- B: ROE Quality
-- C: Dividend Policy & Sustainability
-- D: Equity Dilution & Capital Raising
-- E: Funding Mix (Debt vs Equity)
-
-## Switching Between Modules
-
-### Via API Request
-
-```json
-{
-  "company": "RELIANCE",
-  "financial_data": { ... },
-  "modules": ["borrowings"]  // Only run borrowings
-}
+And add the case to `calculate_metrics()`:
+```python
+elif self.module_id == "my_new_module":
+    metrics = self._calc_my_new_module_metrics(data)
 ```
 
-```json
-{
-  "company": "RELIANCE", 
-  "financial_data": { ... },
-  "modules": ["equity_funding_mix"]  // Only run equity
-}
+### Step 3: Test
+
+```python
+from src.app.agents import analyze
+
+result = analyze("my_new_module", {
+    "field1": 100,
+    "field2": 200,
+    "field3": 50,
+})
+print(result.score, result.metrics)
 ```
 
-```json
-{
-  "company": "RELIANCE",
-  "financial_data": { ... }
-  // No modules specified = run all enabled modules
-}
-```
+**Done!** No new files needed.
 
-### Enabling/Disabling Modules
+---
 
-In `agents_config.yaml`:
+## YAML Configuration Reference
+
+### Module Structure
 
 ```yaml
-modules:
-  borrowings:
-    enabled: true   # Module is active
-  
-  equity_funding_mix:
-    enabled: false  # Module is disabled
+module_id:
+  enabled: true/false           # Toggle module on/off
+  name: "DisplayName"           # Human-readable name
+  description: "..."            # Module description
+  agent_prompt: |               # LLM system prompt
+    You are...
+  output_sections: [...]        # Sections for LLM output
+  input_fields: [...]           # Required input fields
+  benchmarks:                   # Threshold constants
+    key: value
+  metrics:                      # Metric definitions
+    metric_name: "formula"
+  trends: [...]                 # Trend calculations (CAGR)
+  rules:                        # Evaluation rules
+    - id: XX
+      name: "..."
+      metric: "..."
+      red: "condition"
+      yellow: "condition"
+      green: "condition"
 ```
+
+### Rule Conditions
+
+```yaml
+# Comparison operators
+red: "> 1.0"        # Greater than
+yellow: ">= 0.5"    # Greater than or equal
+green: "< 0.3"      # Less than
+green: "<= 0.2"     # Less than or equal
+
+# Special
+yellow: "declining" # For trend-based (not auto-evaluated)
+```
+
+---
+
+## API Reference
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | API info |
+| GET | `/modules` | List all modules |
+| GET | `/modules/{id}` | Module details |
+| GET | `/modules/{id}/required-fields` | Required input fields |
+| POST | `/analyze` | Run all/selected modules |
+| POST | `/analyze/{module_id}` | Run specific module |
+| POST | `/reload-config` | Reload YAML config |
+
+### Response Format
+
+```json
+{
+  "company": "ACME",
+  "analysis": {
+    "module_name": "EquityFundingMix",
+    "module_id": "equity_funding_mix",
+    "timestamp": "2024-01-15T10:30:00",
+    "metrics": {
+      "roe": 0.1397,
+      "dividend_payout_ratio": 0.125
+    },
+    "rules_results": [
+      {
+        "rule_id": "B1",
+        "rule_name": "Return on Equity",
+        "metric_name": "roe",
+        "value": 0.1397,
+        "status": "YELLOW",
+        "message": "Return on Equity is in YELLOW zone (13.97%)"
+      }
+    ],
+    "score": 63,
+    "score_interpretation": "Fair",
+    "llm_narrative": "..."
+  }
+}
+```
+
+---
 
 ## Scoring System
 
-Each module produces a sub-score using this formula:
+- **Base Score**: 70
+- **RED**: -10 points per rule
+- **YELLOW**: -5 points per rule
+- **GREEN**: +1 point per rule
+- **Range**: 0-100
 
+| Score | Interpretation |
+|-------|----------------|
+| 80+ | Excellent |
+| 65-79 | Good |
+| 50-64 | Fair |
+| 35-49 | Poor |
+| <35 | Critical |
+
+---
+
+## Sample Request Body
+
+```json
+{
+  "company": "TESTCO",
+  "generate_narrative": false,
+  "modules": ["borrowings", "equity_funding_mix"],
+  "financial_data": {
+    "financial_years": [
+      {
+        "year": 2024,
+        "short_term_debt": 500,
+        "long_term_debt": 1500,
+        "total_equity": 3000,
+        "revenue": 10000,
+        "ebitda": 2000,
+        "ebit": 1500,
+        "finance_cost": 200,
+        "share_capital": 1000,
+        "reserves_and_surplus": 2000,
+        "net_worth": 3000,
+        "pat": 800,
+        "dividend_paid": -100,
+        "free_cash_flow": 600
+      }
+    ]
+  }
+}
 ```
-score = 70 (base)
-      - 10 × (RED flags)
-      - 5 × (YELLOW flags)
-      + 1 × (GREEN flags)
-      
-Final score clamped to [0, 100]
-```
 
-These weights are configurable in `agents_config.yaml`:
+---
 
-```yaml
-global:
-  default_score: 70
-  red_penalty: 10
-  yellow_penalty: 5
-  green_bonus: 1
-```
+## Migration from Old Architecture
 
-## LLM Integration
+If you have existing module files (like `equity_funding_module/`), you can keep them for backward compatibility, but the new `GenericAgent` approach is recommended for new modules.
 
-Each module can generate narrative analysis using an LLM. The system prompt and output sections are configured in YAML:
-
-```yaml
-agent:
-  system_prompt: |
-    You are a senior analyst specializing in...
-  output_sections:
-    - "Section 1"
-    - "Section 2"
-```
-
-The LLM receives:
-- Computed metrics
-- Rule flags and results
-- Trend analysis
-- Company context
-
-## Testing
-
-Run the test script:
-```bash
-python test_equity_funding_module.py
-```
-
-## Future Modules (Planned)
-
-- Liquidity Module
-- Working Capital Module
-- Capex & Asset Quality Module
-- Risk Assessment Module
+The old modules still work and can be called directly if needed.
