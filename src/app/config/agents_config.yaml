@@ -1,0 +1,336 @@
+# =============================================================
+# agents_config.yaml
+# Central configuration for all analytical modules and agents
+# =============================================================
+
+# Global settings
+global:
+  default_score: 70
+  red_penalty: 10
+  yellow_penalty: 5
+  green_bonus: 1
+  min_score: 0
+  max_score: 100
+
+# =============================================================
+# MODULE DEFINITIONS
+# =============================================================
+
+modules:
+  # ---------------------------------------------------------
+  # BORROWINGS MODULE
+  # ---------------------------------------------------------
+  borrowings:
+    enabled: true
+    name: "Borrowings"
+    description: "Debt structure, leverage, and borrowing risk analysis"
+    
+    agent:
+      name: "Debt Analysis Agent"
+      system_prompt: |
+        You are a senior credit analyst specializing in debt and leverage analysis.
+        Analyze the company's borrowing structure, debt sustainability, and leverage risks.
+      
+      output_sections:
+        - "Overall leverage assessment"
+        - "Key concerns (red/yellow flags)"
+        - "Positives"
+        - "Final investment/credit conclusion"
+    
+    metrics:
+      per_year:
+        - name: "total_debt"
+          formula: "short_term_debt + long_term_debt"
+          description: "Total debt outstanding"
+        - name: "st_debt_share"
+          formula: "short_term_debt / total_debt"
+          description: "Short-term debt as percentage of total"
+        - name: "de_ratio"
+          formula: "total_debt / total_equity"
+          description: "Debt to Equity ratio"
+        - name: "debt_ebitda"
+          formula: "total_debt / ebitda"
+          description: "Debt to EBITDA multiple"
+        - name: "interest_coverage"
+          formula: "ebit / finance_cost"
+          description: "Interest coverage ratio"
+      
+      trends:
+        - name: "debt_cagr"
+          description: "5-year debt CAGR"
+        - name: "ebitda_cagr"
+          description: "5-year EBITDA CAGR"
+        - name: "lt_debt_cagr"
+          description: "Long-term debt CAGR"
+    
+    rules:
+      # Debt Growth Rules
+      - id: "A1"
+        name: "Debt CAGR vs EBITDA CAGR"
+        category: "debt_growth"
+        condition: "debt_cagr > ebitda_cagr"
+        flag: "RED"
+        threshold_desc: "Debt growing faster than earnings"
+        reason_template: "Leverage increasing faster than earnings (Debt CAGR: {debt_cagr:.2f}%, EBITDA CAGR: {ebitda_cagr:.2f}%)"
+      
+      - id: "B1"
+        name: "Debt-to-Equity Threshold"
+        category: "leverage"
+        thresholds:
+          red: "> 1.0"
+          yellow: "> 0.5"
+          green: "<= 0.5"
+        metric: "de_ratio"
+        reasons:
+          red: "Highly leveraged"
+          yellow: "Moderately leveraged"
+          green: "Healthy leverage"
+
+  # ---------------------------------------------------------
+  # EQUITY FUNDING MIX MODULE
+  # ---------------------------------------------------------
+  equity_funding_mix:
+    enabled: true
+    name: "EquityFundingMix"
+    description: "Equity quality, retained earnings, dividend policy, and funding mix analysis"
+    
+    agent:
+      name: "Equity & Funding Agent"
+      system_prompt: |
+        You are a senior equity analyst specializing in capital structure and shareholder value analysis.
+        Evaluate the quality and sustainability of equity, focusing on:
+        - Earnings retention & internal capital formation
+        - Dividend payout discipline & sustainability
+        - Return on Equity (ROE)
+        - Funding mix (debt vs equity)
+        - Equity dilution signals
+        - Long-term capital structure health
+      
+      output_sections:
+        - "Overall equity quality assessment"
+        - "Retained earnings and internal capital formation"
+        - "Dividend policy sustainability"
+        - "ROE and capital efficiency"
+        - "Funding mix and dilution analysis"
+        - "Key concerns (red/yellow flags)"
+        - "Positives"
+        - "Final assessment and recommendations"
+    
+    # Industry benchmarks (configurable per industry)
+    benchmarks:
+      generic:
+        payout_normal: 0.30
+        payout_high: 0.50
+        roe_good: 0.15
+        roe_modest: 0.10
+        dilution_warning: 0.05
+        dilution_high: 0.10
+        dividends_exceed_fcf_warning: 1.0
+        high_dividend_to_pat: 1.0
+        retained_earnings_decline_warning: 0.0
+        leverage_rising_threshold: 0.10
+    
+    metrics:
+      per_year:
+        # Core Equity Metrics
+        - name: "retained_earnings"
+          formula: "reserves_and_surplus"
+          description: "Retained earnings (Reserves & Surplus)"
+        
+        - name: "dividend_payout_ratio"
+          formula: "abs(dividend_paid) / pat"
+          description: "Dividend payout as percentage of PAT"
+        
+        - name: "dividend_to_fcf_ratio"
+          formula: "abs(dividend_paid) / free_cash_flow"
+          description: "Dividend as percentage of Free Cash Flow"
+        
+        - name: "roe"
+          formula: "pat / avg_equity"
+          description: "Return on Equity"
+        
+        - name: "equity_dilution_pct"
+          formula: "new_share_issuance / prior_share_capital"
+          description: "Equity dilution percentage"
+        
+        # Funding Mix Metrics
+        - name: "debt_to_equity"
+          formula: "debt_equitymix / net_worth"
+          description: "Debt to Equity ratio"
+        
+        - name: "equity_ratio"
+          formula: "net_worth / (net_worth + debt_equitymix)"
+          description: "Equity as percentage of total capital"
+        
+        - name: "debt_ratio"
+          formula: "debt_equitymix / (net_worth + debt_equitymix)"
+          description: "Debt as percentage of total capital"
+      
+      trends:
+        - name: "retained_earnings_cagr"
+          description: "5-year retained earnings CAGR"
+        - name: "roe_trend"
+          description: "5-year ROE trend (slope)"
+        - name: "payout_ratio_trend"
+          description: "5-year payout ratio trend"
+        - name: "equity_cagr"
+          description: "5-year equity CAGR"
+        - name: "debt_cagr"
+          description: "5-year debt CAGR"
+        - name: "pat_cagr"
+          description: "5-year PAT CAGR"
+    
+    rules:
+      # A. Retained Earnings & Internal Capital Formation
+      - id: "A1"
+        name: "Retained Earnings Growth"
+        category: "retained_earnings"
+        metric: "re_growth_yoy"
+        thresholds:
+          red: "< 0"
+          yellow: "< 0.05"
+          green: ">= 0.05"
+        reasons:
+          red: "Profit retention deteriorating - negative retained earnings growth"
+          yellow: "Weak internal capital formation - RE growth below 5%"
+          green: "Healthy retained earnings growth supporting internal capital formation"
+      
+      # B. ROE Quality Rules
+      - id: "B1"
+        name: "Return on Equity Threshold"
+        category: "profitability"
+        metric: "roe"
+        thresholds:
+          red: "< 0.10"
+          yellow: "< 0.15"
+          green: ">= 0.15"
+        reasons:
+          red: "Poor returns to equity holders - ROE below 10%"
+          yellow: "Moderate but acceptable ROE between 10-15%"
+          green: "Strong returns to equity holders - ROE above 15%"
+      
+      - id: "B2"
+        name: "ROE Declining Trend"
+        category: "profitability"
+        condition: "roe_declining_3y"
+        flag: "YELLOW"
+        threshold_desc: "3 consecutive years of ROE decline"
+        reason_template: "Erosion in profitability and capital efficiency - ROE declining for 3 consecutive years"
+      
+      # C. Dividend Policy & Sustainability
+      - id: "C1"
+        name: "Dividend Payout Ratio Threshold"
+        category: "dividend_policy"
+        metric: "dividend_payout_ratio"
+        thresholds:
+          red: "> 1.0"
+          yellow: "> 0.50"
+          green: "<= 0.50"
+        reasons:
+          red: "Paying more than earnings (unsustainable) - payout ratio exceeds 100%"
+          yellow: "Excessive payouts limiting reinvestment - payout ratio 50-100%"
+          green: "Normal payout discipline - payout ratio below 50%"
+      
+      - id: "C2"
+        name: "Dividend vs FCF Check"
+        category: "dividend_policy"
+        metric: "dividend_to_fcf_ratio"
+        thresholds:
+          red: "> 1.0"
+          yellow: "> 0.80"
+          green: "<= 0.80"
+        reasons:
+          red: "Paying dividends from debt/financing - dividends exceed free cash flow"
+          yellow: "Dividends consuming most of free cash flow"
+          green: "Sustainable dividend coverage from free cash flow"
+      
+      - id: "C3"
+        name: "Payout Rising While PAT Stagnant"
+        category: "dividend_policy"
+        condition: "payout_rising_pat_stagnant"
+        flag: "YELLOW"
+        threshold_desc: "Payout ratio increasing despite flat PAT"
+        reason_template: "Capital discipline risk - payout ratio rising while PAT remains stagnant"
+      
+      # D. Equity Dilution & Capital Raising
+      - id: "D1"
+        name: "Dilution Threshold"
+        category: "dilution"
+        metric: "equity_dilution_pct"
+        thresholds:
+          red: "> 0.10"
+          yellow: "> 0.05"
+          green: "<= 0.05"
+        reasons:
+          red: "Significant dilution - equity issuance exceeds 10%"
+          yellow: "Moderate dilution - equity issuance 5-10%"
+          green: "Minimal dilution - equity issuance below 5%"
+      
+      - id: "D2"
+        name: "Dilution Without Earnings Growth"
+        category: "dilution"
+        condition: "dilution_without_earnings"
+        flag: "YELLOW"
+        threshold_desc: "Dilution >5% AND PAT CAGR <5%"
+        reason_template: "Weak return on new equity capital - significant dilution without corresponding earnings growth"
+      
+      # E. Funding Mix: Debt vs Equity
+      - id: "E1"
+        name: "Debt Rising vs Equity Stagnating"
+        category: "funding_mix"
+        condition: "debt_outpacing_equity"
+        flag: "YELLOW"
+        threshold_desc: "Debt CAGR > Equity CAGR + 10%"
+        reason_template: "Higher reliance on debt - debt growing significantly faster than equity"
+      
+      - id: "E2"
+        name: "Net Worth Stagnating While Debt Rising"
+        category: "funding_mix"
+        condition: "networth_stagnant_debt_rising"
+        flag: "RED"
+        threshold_desc: "Net Worth CAGR < 0 AND Debt CAGR > 0"
+        reason_template: "Weak equity cushion with rising leverage - net worth declining while debt increases"
+
+  # ---------------------------------------------------------
+  # TEMPLATE FOR NEW MODULES (Copy and modify)
+  # ---------------------------------------------------------
+  # new_module_template:
+  #   enabled: false
+  #   name: "NewModule"
+  #   description: "Description of the module"
+  #   
+  #   agent:
+  #     name: "Agent Name"
+  #     system_prompt: |
+  #       Your agent instructions here
+  #     output_sections:
+  #       - "Section 1"
+  #       - "Section 2"
+  #   
+  #   benchmarks:
+  #     generic:
+  #       metric1: 0.5
+  #       metric2: 0.3
+  #   
+  #   metrics:
+  #     per_year:
+  #       - name: "metric_name"
+  #         formula: "formula_expression"
+  #         description: "What this metric measures"
+  #     trends:
+  #       - name: "trend_name"
+  #         description: "Trend description"
+  #   
+  #   rules:
+  #     - id: "R1"
+  #       name: "Rule Name"
+  #       category: "category"
+  #       metric: "metric_name"
+  #       thresholds:
+  #         red: "> value"
+  #         yellow: "> value"
+  #         green: "<= value"
+  #       reasons:
+  #         red: "Red flag reason"
+  #         yellow: "Yellow flag reason"
+  #         green: "Green flag reason"

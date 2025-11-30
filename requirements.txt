@@ -6,3 +6,8 @@ python-dotenv
 lxml
 html2text
 markdownify
+pyyaml
+fastapi
+uvicorn
+pydantic
+openai
