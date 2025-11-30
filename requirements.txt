@@ -11,3 +11,5 @@ fastapi
 uvicorn
 pydantic
 openai
+langgraph
+langchain-core

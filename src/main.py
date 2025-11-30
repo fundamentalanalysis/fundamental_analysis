@@ -24,22 +24,53 @@ from src.app.schemas import (
     FinancialData,
     AnalyzeRequest,
 )
-from src.app.agents import AgentOrchestrator, GenericAgent
+from src.app.agents import AgentOrchestrator, GenericAgent, AnalysisWorkflow, create_workflow
 
 
 # ---------------------------------------------------------
 # FASTAPI APP WITH LIFESPAN
 # ---------------------------------------------------------
 
-# Global orchestrator instance
+# Global instances
 orchestrator: AgentOrchestrator = None
+workflow: AnalysisWorkflow = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize orchestrator on startup, cleanup on shutdown"""
-    global orchestrator
+    """Initialize orchestrator and workflow on startup, cleanup on shutdown"""
+    global orchestrator, workflow
     orchestrator = AgentOrchestrator()
+    workflow = create_workflow(enable_checkpoints=True)
     print(f"Initialized {len(orchestrator.list_modules())} modules from YAML config")
+    print("LangGraph workflow initialized")
+    
+    # Save workflow graph on startup
+    try:
+        import os
+        graph_dir = os.path.join(ROOT, "graphs")
+        os.makedirs(graph_dir, exist_ok=True)
+        
+        # Save PNG
+        png_path = os.path.join(graph_dir, "workflow_graph.png")
+        workflow.save_graph_image(png_path)
+        print(f"✅ Workflow graph saved to: {png_path}")
+        
+        # Save Mermaid markdown
+        graph = workflow.graph.get_graph()
+        mermaid_code = graph.draw_mermaid()
+        
+        md_path = os.path.join(graph_dir, "workflow_graph.md")
+        with open(md_path, "w") as f:
+            f.write("# LangGraph Workflow Visualization\n\n")
+            f.write(f"## Available Modules: {', '.join(workflow.available_modules)}\n\n")
+            f.write("```mermaid\n")
+            f.write(mermaid_code)
+            f.write("\n```\n")
+        print(f"✅ Workflow mermaid saved to: {md_path}")
+        
+    except Exception as e:
+        print(f"⚠️ Could not save workflow graph: {e}")
+    
     yield
     # Cleanup on shutdown (if needed)
     print("Shutting down...")
@@ -47,7 +78,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fundamental Analysis Multi-Agent Engine",
     version="3.0",
-    description="API for comprehensive financial analysis with 12 YAML-configurable modules",
+    description="API for comprehensive financial analysis with 12 YAML-configurable modules and LangGraph workflow",
     lifespan=lifespan
 )
 
@@ -295,10 +326,13 @@ def root():
     return {
         "message": "Fundamental Analysis Multi-Agent Engine",
         "version": "3.0",
-        "architecture": "YAML-driven GenericAgent with single entry point",
+        "architecture": "YAML-driven GenericAgent with LangGraph workflow",
         "endpoints": {
             "/analyze": "POST - Run analysis with specified modules (or all)",
             "/analyze/{module_id}": "POST - Run specific module analysis",
+            "/workflow/analyze": "POST - Run analysis with LangGraph workflow (recommended)",
+            "/workflow/stream": "POST - Stream workflow execution with real-time updates",
+            "/workflow/graph": "GET - Get workflow graph visualization",
             "/modules": "GET - List all available modules",
             "/modules/{module_id}": "GET - Get module details",
             "/modules/{module_id}/required-fields": "GET - Get required input fields",
@@ -429,6 +463,153 @@ def analyze_single_module(module_id: str, req: AnalyzeRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------
+# LANGGRAPH WORKFLOW ENDPOINTS
+# ---------------------------------------------------------
+
+@app.post("/workflow/analyze")
+def workflow_analyze(req: AnalyzeRequest):
+    """
+    Run analysis using LangGraph workflow.
+    
+    This endpoint uses LangGraph for:
+    - State-based workflow management
+    - Automatic risk flag aggregation
+    - Key insights extraction
+    - Comprehensive summary generation
+    
+    Returns structured output with risk_flags, key_insights, and summary.
+    """
+    try:
+        company = req.company.upper()
+        fds = req.financial_data.financial_years
+        
+        # Use most recent year for current data
+        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+        current_data = financial_year_to_dict(sorted_fds[0])
+        historical_data = prepare_historical_data(fds)
+        
+        # Calculate YoY growth for all metrics
+        yoy_growth = calculate_yoy_growth(fds)
+        
+        # Run workflow
+        result = workflow.run(
+            company=company,
+            current_data=current_data,
+            historical_data=historical_data,
+            modules=req.modules,
+            generate_narrative=req.generate_narrative
+        )
+        
+        return {
+            "company": company,
+            "workflow_status": result.get("workflow_status"),
+            "overall_score": result.get("overall_score"),
+            "modules_completed": result.get("modules_completed"),
+            "modules_failed": result.get("modules_failed"),
+            "risk_flags": result.get("risk_flags"),
+            "key_insights": result.get("key_insights"),
+            "module_results": result.get("module_results"),
+            "summary": result.get("summary"),
+            "yoy_growth": {"metrics": yoy_growth},
+            "errors": result.get("errors"),
+        }
+        
+    except Exception as e:
+        import traceback
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status_code=500)
+
+
+@app.post("/workflow/stream")
+async def workflow_stream(req: AnalyzeRequest):
+    """
+    Stream workflow execution for real-time progress updates.
+    
+    Returns Server-Sent Events (SSE) with progress after each module.
+    """
+    from fastapi.responses import StreamingResponse
+    import json
+    
+    company = req.company.upper()
+    fds = req.financial_data.financial_years
+    
+    sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+    current_data = financial_year_to_dict(sorted_fds[0])
+    historical_data = prepare_historical_data(fds)
+    
+    async def generate():
+        try:
+            for state_update in workflow.stream(
+                company=company,
+                current_data=current_data,
+                historical_data=historical_data,
+                modules=req.modules,
+                generate_narrative=req.generate_narrative
+            ):
+                # Send state update as SSE
+                yield f"data: {json.dumps(state_update)}\n\n"
+            
+            yield f"data: {json.dumps({'status': 'completed'})}\n\n"
+            
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream"
+    )
+
+
+@app.get("/workflow/graph")
+def get_workflow_graph():
+    """Get a text visualization of the workflow graph"""
+    try:
+        graph_viz = workflow.get_graph_visualization()
+        return {
+            "graph": graph_viz,
+            "modules": workflow.available_modules
+        }
+    except Exception as e:
+        return {"error": str(e), "modules": workflow.available_modules}
+
+
+@app.get("/workflow/modules")
+def get_available_modules():
+    """
+    Get list of available modules for workflow execution.
+    
+    Use these module IDs in the 'modules' field of analyze requests
+    to select which agents to run.
+    
+    Example usage:
+    - modules: ["borrowings"] - Run only borrowings analysis
+    - modules: ["equity_funding_mix"] - Run only equity funding mix
+    - modules: ["borrowings", "equity_funding_mix"] - Run both
+    - modules: null or omit - Run all enabled modules
+    """
+    return {
+        "available_modules": workflow.available_modules,
+        "total_count": len(workflow.available_modules),
+        "usage_examples": {
+            "single_module": {
+                "modules": ["borrowings"],
+                "description": "Run only the borrowings analysis module"
+            },
+            "multiple_modules": {
+                "modules": ["borrowings", "equity_funding_mix"],
+                "description": "Run both borrowings and equity_funding_mix modules"
+            },
+            "all_modules": {
+                "modules": None,
+                "description": "Run all enabled modules (default behavior)"
+            }
+        }
+    }
 
 
 # ---------------------------------------------------------

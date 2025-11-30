@@ -1,0 +1,37 @@
+# LangGraph Workflow Visualization
+
+## Workflow Graph for Financial Analysis
+
+This graph shows the flow between:
+- **borrowings** - Debt/Borrowings Analysis Module
+- **equity_funding_mix** - Equity Funding Mix Analysis Module
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	initialize(initialize)
+	run_borrowings(run_borrowings)
+	run_equity_funding_mix(run_equity_funding_mix)
+	calculate_score(calculate_score)
+	generate_summary(generate_summary)
+	router(router)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> initialize;
+	calculate_score --> generate_summary;
+	initialize --> router;
+	router -.-> calculate_score;
+	router -.-> run_borrowings;
+	router -.-> run_equity_funding_mix;
+	run_borrowings --> router;
+	run_equity_funding_mix --> router;
+	generate_summary --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+
+```
