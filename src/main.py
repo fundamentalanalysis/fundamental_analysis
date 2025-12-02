@@ -19,10 +19,17 @@ from src.app.borrowing_module.debt_models import (
 )
 from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
 
+from src.app.asset_quality_module.asset_models import (
+    AssetQualityInput,
+    AssetFinancialYearInput,
+    IndustryAssetBenchmarks,
+)
+from src.app.asset_quality_module.asset_orchestrator import AssetIntangibleQualityModule
+
 
 DEFAULT_BENCHMARKS = IndustryBenchmarks(
-    target_de_ratio=1.5,
-    max_safe_de_ratio=2.5,
+    target_de_ratio=0.5,
+    max_safe_de_ratio=1,
     max_safe_debt_ebitda=4.0,
     min_safe_icr=2.0,
     high_floating_share=0.60,
@@ -30,10 +37,12 @@ DEFAULT_BENCHMARKS = IndustryBenchmarks(
 )
 
 DEFAULT_COVENANTS = CovenantLimits(
-    de_ratio_limit=3.0,
+    de_ratio_limit=1.0,
     icr_limit=2.0,
     debt_ebitda_limit=4.0,
 )
+
+DEFAULT_ASSET_BENCHMARKS = IndustryAssetBenchmarks()
 
 
 # ---------- API Request Schemas ----------
@@ -67,14 +76,39 @@ class BorrowingsRequest(BaseModel):
     financial_data: FinancialData
 
 
+class AssetFinancialYearRequest(BaseModel):
+    year: int
+    net_block: Optional[float] = 0.0
+    accumulated_depreciation: Optional[float] = 0.0
+    gross_block: Optional[float] = 0.0
+    impairment_loss: Optional[float] = 0.0
+    cwip: Optional[float] = 0.0
+    intangibles: Optional[float] = 0.0
+    goodwill: Optional[float] = 0.0
+    revenue: Optional[float] = 0.0
+    intangible_amortization: Optional[float] = 0.0
+    r_and_d_expenses: Optional[float] = 0.0
+
+
+class AssetFinancialData(BaseModel):
+    financial_years: List[AssetFinancialYearRequest]
+
+
+class AssetQualityRequest(BaseModel):
+    company: str
+    industry_code: Optional[str] = "GENERAL"
+    financial_data: AssetFinancialData
+
+
 # ---------- FastAPI App ----------
 app = FastAPI(
-    title="Borrowings Analytical Engine",
-    version="1.0",
-    description="Deterministic + LLM hybrid module for leverage risk assessment",
+    title="Financial Analytical Engine",
+    version="1.1",
+    description="Multi-module financial analysis system (Borrowings, Asset Quality)",
 )
 
-engine = BorrowingsModule()
+borrowings_engine = BorrowingsModule()
+asset_quality_engine = AssetIntangibleQualityModule()
 
 
 @app.post("/borrowings/analyze")
@@ -92,7 +126,29 @@ def analyze_borrowings(req: BorrowingsRequest):
             industry_benchmarks=DEFAULT_BENCHMARKS,
             covenant_limits=DEFAULT_COVENANTS,
         )
-        result = engine.run(module_input)
+        result = borrowings_engine.run(module_input)
+        return result.dict()
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/asset_quality/analyze")
+def analyze_asset_quality(req: AssetQualityRequest):
+    try:
+        financial_years = [
+            AssetFinancialYearInput(**fy.dict())
+            for fy in req.financial_data.financial_years
+        ]
+
+        module_input = AssetQualityInput(
+            company_id=req.company.upper(),
+            industry_code=(req.industry_code or "GENERAL").upper(),
+            financials_5y=financial_years,
+            industry_asset_quality_benchmarks=DEFAULT_ASSET_BENCHMARKS,
+        )
+        result = asset_quality_engine.run(module_input)
         return result.dict()
     except ValidationError as ve:
         raise HTTPException(status_code=422, detail=ve.errors())

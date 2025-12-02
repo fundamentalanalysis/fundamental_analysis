@@ -3,7 +3,7 @@ from typing import Tuple, List, Dict
 
 from .borrowings_config import load_rule_config, BorrowingsRuleConfig
 from .debt_llm import generate_llm_narrative
-from .debt_metrics import compute_per_year_metrics, compute_yoy_percentages
+from .debt_metrics import compute_per_year_metrics
 from .debt_models import BorrowingsInput, BorrowingsOutput, RuleResult
 from .debt_rules import apply_rules
 from .debt_trend import compute_trend_metrics
@@ -17,7 +17,6 @@ class BorrowingsModule:
     def run(self, bi: BorrowingsInput) -> BorrowingsOutput:
         per_year_metrics = compute_per_year_metrics(bi.financials_5y)
         trend_metrics = compute_trend_metrics(per_year_metrics)
-        yoy_metrics = compute_yoy_percentages(per_year_metrics)
 
         rule_results = apply_rules(
             metrics=per_year_metrics,
@@ -69,7 +68,6 @@ class BorrowingsModule:
             red_flags=red_flags,
             positive_points=positives,
             rules=rule_results,
-            metrics=yoy_metrics,
         )
 
     @staticmethod

@@ -77,4 +77,3 @@ class BorrowingsOutput(BaseModel):
     red_flags: List[Dict[str, Any]]
     positive_points: List[str]
     rules: List[RuleResult]
-    metrics: Dict[str, Dict[str, Any]]
