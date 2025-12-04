@@ -1,66 +1,98 @@
-# metrics_engine.py
+from typing import Dict, List
 
-import numpy as np
+from ..borrowing_module.debt_models import YearFinancialInput
 
 def safe_div(a, b):
-    try:
-        if b in (0, None):
-            return None
-        return a / b
-    except:
-        return None
+    """Safely divide two numbers, returning None if division is invalid."""
+    return a / b if (b not in (0, None) and a is not None) else None
 
-def compute_year_metrics(curr, prev):
+
+def compute_year_metrics(current: dict, previous: dict | None) -> dict:
     """
-    Computes all core metrics for a single year.
-    curr = current year dict
-    prev = previous year dict (may be None)
+    Compute per-year metrics for Capex & CWIP Rules.
+    
+    current: dict for the year
+    previous: dict for previous year (or None)
+    
+    This matches the new CapexCwipModule orchestrator and the rules_engine.
     """
 
-    capex = curr["capex"]
-    revenue = curr["revenue"]
-    cwip = curr["cwip"]
-    nfa = curr["net_fixed_assets"]
-    ocf = curr["operating_cash_flow"]
-    fcf = curr["free_cash_flow"]
+    # --- Safe getters ---
+    def g(d, key):
+        return None if d is None else d.get(key)
 
-    lt_debt = curr["long_term_debt"]
-    lt_debt_prev = prev["long_term_debt"] if prev else None
+    capex = g(current, "capex")
+    revenue = g(current, "revenue")
+    cwip = g(current, "cwip")
+    nfa = g(current, "net_fixed_assets")
+    free_cf = g(current, "free_cash_flow")
+    operating_cf = g(current, "operating_cash_flow")
 
-    metrics = {}
+    # -----------------------------
+    # Derived Metrics
+    # -----------------------------
 
-    # A. Capex & CWIP metrics
-    metrics["capex_intensity"] = safe_div(capex, revenue)
-    metrics["cwip_pct"] = safe_div(cwip, (cwip + nfa)) if (cwip is not None and nfa is not None) else None
-    metrics["nfa_cwip_total"] = (cwip or 0) + (nfa or 0)
+    # Capex Intensity
+    capex_intensity = None
+    if capex is not None and revenue not in (None, 0):
+        capex_intensity = capex / revenue
 
-    # YoY growths
-    metrics["cwip_yoy"] = safe_div((cwip - prev["cwip"]), prev["cwip"]) if prev else None
-    metrics["capex_yoy"] = safe_div((capex - prev["capex"]), prev["capex"]) if prev else None
-    metrics["revenue_yoy"] = safe_div((revenue - prev["revenue"]), prev["revenue"]) if prev else None
-    metrics["nfa_yoy"] = safe_div((nfa - prev["net_fixed_assets"]), prev["net_fixed_assets"]) if prev else None
+    # CWIP % of NFA
+    cwip_pct = None
+    if cwip is not None and nfa not in (None, 0):
+        cwip_pct = cwip / nfa
 
-    # B. Asset efficiency
-    metrics["asset_turnover"] = safe_div(revenue, nfa)
-    metrics["fcf_coverage"] = safe_div(fcf, capex)
+    # CWIP YoY
+    cwip_yoy = None
+    if previous is not None:
+        prev_cwip = g(previous, "cwip")
+        if prev_cwip not in (None, 0) and cwip is not None:
+            cwip_yoy = (cwip - prev_cwip) / prev_cwip
 
-    # C. Debt-funded capex
-    if prev and lt_debt_prev is not None:
-        debt_growth = lt_debt - lt_debt_prev
-        metrics["debt_funded_capex"] = safe_div(debt_growth, capex)
-    else:
-        metrics["debt_funded_capex"] = None
+    # NFA YoY
+    nfa_yoy = None
+    if previous is not None:
+        prev_nfa = g(previous, "net_fixed_assets")
+        if prev_nfa not in (None, 0) and nfa is not None:
+            nfa_yoy = (nfa - prev_nfa) / prev_nfa
+
+    # Asset Turnover
+    asset_turnover = None
+    if revenue not in (None, 0) and nfa not in (None, 0):
+        asset_turnover = revenue / nfa
+
+    # Debt-funded Capex
+    # = (Capex - FCF) / Capex
+    debt_funded_capex = None
+    if capex not in (None, 0) and free_cf is not None:
+        debt_funded_capex = (capex - free_cf) / capex
+
+    # FCF Coverage
+    # = Free Cash Flow / Capex
+    fcf_coverage = None
+    if capex not in (None, 0) and free_cf is not None:
+        fcf_coverage = free_cf / capex
+
+    # -----------------------------
+    # Final Metrics Output
+    # -----------------------------
+    return {
+        "year": current.get("year"),
+
+        "capex": capex,
+        "revenue": revenue,
+        "cwip": cwip,
+        "net_fixed_assets": nfa,
+        "free_cash_flow": free_cf,
+        "operating_cash_flow": operating_cf,
+
+        "capex_intensity": capex_intensity,
+        "cwip_pct": cwip_pct,
+        "cwip_yoy": cwip_yoy,
+        "nfa_yoy": nfa_yoy,
+        "asset_turnover": asset_turnover,
+        "debt_funded_capex": debt_funded_capex,
+        "fcf_coverage": fcf_coverage,
+    }
 
     return metrics
-
-
-def compute_cagr(series):
-    """Computes CAGR for list of values."""
-    series = [v for v in series if v is not None]
-    if len(series) < 2:
-        return None
-    start, end = series[0], series[-1]
-    if start <= 0:
-        return None
-    n = len(series) - 1
-    return (end / start) ** (1 / n) - 1

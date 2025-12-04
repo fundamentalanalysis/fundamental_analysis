@@ -16,6 +16,7 @@ class YearFinancialInput(BaseModel):
     capex: float = 0
     cwip: float = 0
     revenue: float = 0
+    operating_cash_flow: float = 0
 
     total_debt_maturing_lt_1y: Optional[float] = None
     total_debt_maturing_1_3y: Optional[float] = None

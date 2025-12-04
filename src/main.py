@@ -25,7 +25,8 @@ from src.app.borrowing_module.debt_models import (
     CovenantLimits,
 )
 from src.app.borrowing_module.debt_orchestrator import run_borrowings_module
-from src.app.capex_cwip_module.orchestrator import run_capex_cwip_module
+# from src.app.capex_cwip_module.orchestrator import run_capex_cwip_module
+from src.app.capex_cwip_module.orchestrator import CapexCwipModule
 
 
 
@@ -177,13 +178,12 @@ app = FastAPI(
 @app.post("/analyze")
 def analyze(req: AnalyzeRequest):
     try:
-
-        # result = execute_borrowings_analysis(req)
-        result = run_capex_cwip_module(req)
+        analyzer = CapexCwipModule()
+        result = analyzer.run(req)
         return result
-
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
 
 
 # ---------------------------------------------------------
