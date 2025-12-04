@@ -433,7 +433,7 @@ def analyze(req: AnalyzeRequest):
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
-        modules = ['borrowings'] if req.modules is None else req.modules
+        modules = ['borrowings', 'equity_funding_mix'] if req.modules is None else req.modules
         
         # Run workflow
         result = workflow.run(
