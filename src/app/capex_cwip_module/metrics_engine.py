@@ -1,98 +1,108 @@
-from typing import Dict, List
+# ============================================================
+# metrics_engine.py  (Final Production-Ready Version)
+# ============================================================
 
-from ..borrowing_module.debt_models import YearFinancialInput
-
-def safe_div(a, b):
-    """Safely divide two numbers, returning None if division is invalid."""
-    return a / b if (b not in (0, None) and a is not None) else None
-
-
-def compute_year_metrics(current: dict, previous: dict | None) -> dict:
+def compute_year_metrics(current: dict, prev: dict | None) -> dict:
     """
-    Compute per-year metrics for Capex & CWIP Rules.
-    
-    current: dict for the year
-    previous: dict for previous year (or None)
-    
-    This matches the new CapexCwipModule orchestrator and the rules_engine.
+    Compute all per-year metrics for Capex/CWIP module.
+    Automatically derives missing fields like:
+      - net_fixed_assets
+      - capex
+      - operating_cash_flow
+      - free_cash_flow
     """
 
-    # --- Safe getters ---
-    def g(d, key):
-        return None if d is None else d.get(key)
+    # -----------------------------------------------------------
+    # 1) Compute Net Fixed Assets (NFA)
+    #     If user did not provide "net_fixed_assets", derive it:
+    #     NFA = Gross Block - Accumulated Depreciation
+    # -----------------------------------------------------------
+    if not current.get("net_fixed_assets"):
+        gb = current.get("gross_block") or 0
+        ad = current.get("accumulated_depreciation") or 0
+        current["net_fixed_assets"] = gb - ad
 
-    capex = g(current, "capex")
-    revenue = g(current, "revenue")
-    cwip = g(current, "cwip")
-    nfa = g(current, "net_fixed_assets")
-    free_cf = g(current, "free_cash_flow")
-    operating_cf = g(current, "operating_cash_flow")
+    nfa = current["net_fixed_assets"]
 
-    # -----------------------------
-    # Derived Metrics
-    # -----------------------------
+    # -----------------------------------------------------------
+    # 2) Compute Capex
+    #     Your input uses "fixed_assets_purchased" (negative value).
+    #     Convert to positive capex.
+    # -----------------------------------------------------------
+    if current.get("capex") is None:
+        fa = current.get("fixed_assets_purchased")
+        current["capex"] = abs(fa) if fa is not None else 0
 
-    # Capex Intensity
-    capex_intensity = None
-    if capex is not None and revenue not in (None, 0):
-        capex_intensity = capex / revenue
+    capex = current["capex"]
 
-    # CWIP % of NFA
-    cwip_pct = None
-    if cwip is not None and nfa not in (None, 0):
-        cwip_pct = cwip / nfa
+    # -----------------------------------------------------------
+    # 3) Compute Operating Cash Flow (OCF)
+    #     OCF = Profit from Operations + WC changes + Interest Paid - Taxes
+    #
+    #     interest_paid_fin is negative in your dataset.
+    # -----------------------------------------------------------
+    if current.get("operating_cash_flow") is None:
+        pfo = current.get("profit_from_operations") or 0
+        wc = current.get("working_capital_changes") or 0
+        ip = current.get("interest_paid_fin") or 0
+        tax = current.get("direct_taxes") or 0
 
-    # CWIP YoY
-    cwip_yoy = None
-    if previous is not None:
-        prev_cwip = g(previous, "cwip")
-        if prev_cwip not in (None, 0) and cwip is not None:
-            cwip_yoy = (cwip - prev_cwip) / prev_cwip
+        current["operating_cash_flow"] = pfo + wc + ip - tax
 
-    # NFA YoY
-    nfa_yoy = None
-    if previous is not None:
-        prev_nfa = g(previous, "net_fixed_assets")
-        if prev_nfa not in (None, 0) and nfa is not None:
-            nfa_yoy = (nfa - prev_nfa) / prev_nfa
+    ocf = current["operating_cash_flow"]
 
-    # Asset Turnover
-    asset_turnover = None
-    if revenue not in (None, 0) and nfa not in (None, 0):
-        asset_turnover = revenue / nfa
+    # -----------------------------------------------------------
+    # 4) Compute Free Cash Flow (FCF)
+    #     FCF = OCF – Capex
+    # -----------------------------------------------------------
+    if current.get("free_cash_flow") is None:
+        current["free_cash_flow"] = ocf - capex
 
-    # Debt-funded Capex
-    # = (Capex - FCF) / Capex
+    fcf = current["free_cash_flow"]
+
+    # -----------------------------------------------------------
+    # Extract revenue
+    # -----------------------------------------------------------
+    rev = current.get("revenue") or 0
+
+    # -----------------------------------------------------------
+    # 5) Capex Metrics
+    # -----------------------------------------------------------
+
+    # Capex Intensity = Capex / Revenue
+    capex_intensity = capex / rev if rev else None
+
+    # CWIP % of Fixed Assets
+    cwip = current.get("cwip") or 0
+    cwip_pct = cwip / nfa if nfa else None
+
+    # Asset Turnover = Revenue / NFA
+    asset_turnover = rev / nfa if nfa else None
+
+    # Debt-Funded Capex = Change in Total Debt / Capex
     debt_funded_capex = None
-    if capex not in (None, 0) and free_cf is not None:
-        debt_funded_capex = (capex - free_cf) / capex
+    if prev:
+        prev_debt = (prev.get("short_term_debt") or 0) + (prev.get("long_term_debt") or 0)
+        curr_debt = (current.get("short_term_debt") or 0) + (current.get("long_term_debt") or 0)
+        debt_change = curr_debt - prev_debt
+        if capex:
+            debt_funded_capex = debt_change / capex
 
-    # FCF Coverage
-    # = Free Cash Flow / Capex
-    fcf_coverage = None
-    if capex not in (None, 0) and free_cf is not None:
-        fcf_coverage = free_cf / capex
+    # FCF Coverage = FCF / Capex
+    fcf_coverage = fcf / capex if capex else None
 
-    # -----------------------------
-    # Final Metrics Output
-    # -----------------------------
+    # -----------------------------------------------------------
+    # 6) Return dictionary of computed metrics
+    # -----------------------------------------------------------
     return {
-        "year": current.get("year"),
-
         "capex": capex,
-        "revenue": revenue,
         "cwip": cwip,
-        "net_fixed_assets": nfa,
-        "free_cash_flow": free_cf,
-        "operating_cash_flow": operating_cf,
+        "nfa": nfa,
+        "revenue": rev,
 
         "capex_intensity": capex_intensity,
         "cwip_pct": cwip_pct,
-        "cwip_yoy": cwip_yoy,
-        "nfa_yoy": nfa_yoy,
         "asset_turnover": asset_turnover,
         "debt_funded_capex": debt_funded_capex,
         "fcf_coverage": fcf_coverage,
     }
-
-    return metrics

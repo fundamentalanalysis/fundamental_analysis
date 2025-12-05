@@ -38,26 +38,38 @@ from src.app.capex_cwip_module.orchestrator import CapexCwipModule
 
 class FinancialYearInput(BaseModel):
     year: int
-    short_term_debt: Optional[float] = None
-    long_term_debt: float
+
+    # Capital structure
     total_equity: Optional[float] = None
-    revenue : float
-    ebitda: Optional[float] = None
-    ebit: Optional[float] = None
-    finance_cost: Optional[float] = None
-    capex: float
-    cwip: float
-    net_fixed_assets: float
-    operating_cash_flow: float
-    free_cash_flow: float
+    reserves: Optional[float] = None
+    short_term_debt: Optional[float] = None
+    long_term_debt: Optional[float] = None
+    cwip: Optional[float] = None
 
-    total_debt_maturing_lt_1y: Optional[float] = None
-    total_debt_maturing_1_3y: Optional[float] = None
-    total_debt_maturing_gt_3y: Optional[float] = None
+    # Assets
+    gross_block: Optional[float] = None
+    accumulated_depreciation: Optional[float] = None
 
-    weighted_avg_interest_rate: Optional[float] = None
-    floating_rate_debt: Optional[float] = None
-    fixed_rate_debt: Optional[float] = None
+    # P&L fields
+    revenue: Optional[float] = None
+    operating_profit: Optional[float] = None
+    interest: Optional[float] = None
+    depreciation: Optional[float] = None
+
+    # Capex (your JSON uses this instead of "capex")
+    fixed_assets_purchased: Optional[float] = None
+
+    # WC & Cash Flow
+    working_capital_changes: Optional[float] = None
+    profit_from_operations: Optional[float] = None
+    interest_paid_fin: Optional[float] = None
+    direct_taxes: Optional[float] = None
+
+    # Derived fields (not required from input)
+    net_fixed_assets: Optional[float] = None
+    capex: Optional[float] = None
+    operating_cash_flow: Optional[float] = None
+    free_cash_flow: Optional[float] = None
 
 
 class FinancialData(BaseModel):

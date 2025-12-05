@@ -154,554 +154,219 @@
 
 
 # capex_rules_engine.py
-
 from typing import List, Dict, Any
+from .models import RuleResult
 
-from src.app.config import DEFAULT_CAPEX_CWIP_RULES as R
-from .models import RuleResult # 👈 adjust import path if RuleResult is elsewhere
-# from .llm_agent import generate_llm_narrative
-
-def _make(
-    rule_id: str,
-    name: str,
-    metric: str,
-    year: int,
-    flag: str,
-    value: Any,
-    threshold: str,
-    reason: str,
-) -> RuleResult:
+def apply_rules(
+    metrics_by_year: Dict[int, Dict[str, Any]],
+    trends: Dict[str, Any]
+) -> List[RuleResult]:
     """
-    Helper to build a RuleResult, matching the style of the borrowings rules engine.
-    """
-    return RuleResult(
-        rule_id=rule_id,
-        rule_name=name,
-        metric=metric,
-        year=year,
-        flag=flag,
-        value=value,
-        threshold=threshold,
-        reason=reason,
-    )
-
-
-def apply_rules(metrics: Dict[str, Any], cagr_data: Dict[str, Any]) -> List[RuleResult]:
-    """
-    Capex & CWIP rules, refactored to return RuleResult objects similar to the
-    borrowings rules engine.
-
-    `metrics` is assumed to be a dict for a single (latest) year, e.g.
-        {
-            "year": 2024,
-            "capex_intensity": ...,
-            "cwip_pct": ...,
-            "cwip_yoy": ...,
-            "nfa_yoy": ...,
-            "asset_turnover": ...,
-            "debt_funded_capex": ...,
-            "fcf_coverage": ...,
-            ...
-        }
-
-    `cagr_data` is assumed to contain trend metrics, e.g.
-        {
-            "capex_cagr": ...,
-            "revenue_cagr": ...,
-            "cwip_increasing_3y": ...,
-            "nfa_cagr": ...,
-            ...
-        }
+    metrics_by_year: {year → metrics dict}
+    trends: full output from compute_trends()
+    Evaluates rules ONLY for latest year.
     """
     results: List[RuleResult] = []
 
-    # Try to pick a year if available; otherwise default to 0 or any sentinel
-    year = metrics.get("year") if isinstance(metrics, dict) else None
-    if year is None:
-        year = 0  # or your preferred default
+    # -------------------------------
+    # 1️⃣ Identify latest year
+    # -------------------------------
+    latest_year = max(metrics_by_year.keys())
+    latest = metrics_by_year[latest_year]
 
-    # --------------------
-    # A1 – Capex Intensity
-    # --------------------
-    capex_int = metrics.get("capex_intensity")
+    capex_intensity = latest.get("capex_intensity")
+    cwip_pct = latest.get("cwip_pct")
+    asset_turnover = latest.get("asset_turnover")
+    debt_funded_capex = latest.get("debt_funded_capex")
+    fcf_coverage = latest.get("fcf_coverage")
 
-    if capex_int is not None:
-        if capex_int > R["capex_intensity_high"]:
-            results.append(
-                _make(
-                    "A1",
-                    "High Capex Intensity",
-                    "capex_intensity",
-                    year,
-                    "RED",
-                    capex_int,
-                    ">0.15",
-                    "Capex intensity exceeds 15%, aggressive expansion.",
-                )
-            )
-        elif capex_int > R["capex_intensity_moderate"]:
-            results.append(
-                _make(
-                    "A1",
-                    "Moderate Capex Intensity",
-                    "capex_intensity",
-                    year,
-                    "YELLOW",
-                    capex_int,
-                    "0.10–0.15",
-                    "Capex is elevated versus revenue.",
-                )
-            )
+    capex_cagr = trends.get("capex_cagr")
+    cwip_cagr = trends.get("cwip_cagr")
+    nfa_cagr = trends.get("nfa_cagr")
+    revenue_cagr = trends.get("revenue_cagr")
+
+    # -------------------------------
+    # 2️⃣ RULES
+    # -------------------------------
+
+    # A1 — Capex Intensity
+    if capex_intensity is not None:
+        if capex_intensity > 0.15:
+            results.append(RuleResult(
+                rule_id="A1",
+                rule_name="High Capex Intensity",
+                metric="capex_intensity",
+                year=latest_year,
+                flag="RED",
+                value=capex_intensity,
+                threshold=">0.15",
+                reason=f"Capex intensity {capex_intensity:.2f} is very high."
+            ))
+        elif capex_intensity > 0.10:
+            results.append(RuleResult(
+                rule_id="A1",
+                rule_name="Moderate Capex Intensity",
+                metric="capex_intensity",
+                year=latest_year,
+                flag="YELLOW",
+                value=capex_intensity,
+                threshold="0.10–0.15",
+                reason="Capex intensity is elevated."
+            ))
         else:
-            results.append(
-                _make(
-                    "A1",
-                    "Normal Capex",
-                    "capex_intensity",
-                    year,
-                    "GREEN",
-                    capex_int,
-                    "<0.10",
-                    "Capex intensity is healthy.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "A1",
-                "Capex Intensity",
-                "capex_intensity",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "<0.10",
-                "Insufficient data to evaluate.",
-            )
-        )
+            results.append(RuleResult(
+                rule_id="A1",
+                rule_name="Normal Capex",
+                metric="capex_intensity",
+                year=latest_year,
+                flag="GREEN",
+                value=capex_intensity,
+                threshold="<0.10",
+                reason="Capex intensity is normal."
+            ))
 
-    # --------------------------------------------------
-    # A2 – Capex growing faster than revenue (CAGR gap)
-    # --------------------------------------------------
-    capex_cagr = cagr_data.get("capex_cagr")
-    revenue_cagr = cagr_data.get("revenue_cagr")
-    gap_warn = R["capex_vs_revenue_gap_warning"]
-
-    if capex_cagr is not None and revenue_cagr is not None:
-        if capex_cagr > (revenue_cagr + gap_warn):
-            results.append(
-                _make(
-                    "A2",
-                    "Capex Growing Too Fast",
-                    "capex_cagr",
-                    year,
-                    "YELLOW",
-                    capex_cagr,
-                    "Capex CAGR > Revenue CAGR + 10%",
-                    "Capex growth exceeds revenue growth by more than 10%.",
-                )
-            )
-        else:
-            results.append(
-                _make(
-                    "A2",
-                    "Capex vs Revenue Growth Normal",
-                    "capex_cagr",
-                    year,
-                    "GREEN",
-                    capex_cagr,
-                    "Capex CAGR ≤ Revenue CAGR + 10%",
-                    "Capex growth in line with revenue growth.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "A2",
-                "Capex vs Revenue Growth",
-                "capex_cagr",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "Capex CAGR > Revenue CAGR + 10%",
-                "Insufficient data to evaluate.",
-            )
-        )
-
-    # -------------
-    # B1 – CWIP %
-    # -------------
-    cwip_pct = metrics.get("cwip_pct")
+    # B1 — CWIP %
     if cwip_pct is not None:
-        if cwip_pct > R["cwip_pct_critical"]:
-            results.append(
-                _make(
-                    "B1",
-                    "CWIP % Critical",
-                    "cwip_pct",
-                    year,
-                    "RED",
-                    cwip_pct,
-                    ">0.40",
-                    "CWIP > 40% of fixed assets.",
-                )
-            )
-        elif cwip_pct > R["cwip_pct_warning"]:
-            results.append(
-                _make(
-                    "B1",
-                    "CWIP % High",
-                    "cwip_pct",
-                    year,
-                    "YELLOW",
-                    cwip_pct,
-                    "0.30–0.40",
-                    "Heavy project pipeline indicated.",
-                )
-            )
+        if cwip_pct > 0.40:
+            results.append(RuleResult(
+                rule_id="B1",
+                rule_name="CWIP % Critical",
+                metric="cwip_pct",
+                year=latest_year,
+                flag="RED",
+                value=cwip_pct,
+                threshold=">40%",
+                reason="CWIP extremely high."
+            ))
+        elif cwip_pct > 0.30:
+            results.append(RuleResult(
+                rule_id="B1",
+                rule_name="CWIP % High",
+                metric="cwip_pct",
+                year=latest_year,
+                flag="YELLOW",
+                value=cwip_pct,
+                threshold="30–40%",
+                reason="CWIP level is elevated."
+            ))
         else:
-            results.append(
-                _make(
-                    "B1",
-                    "CWIP % Normal",
-                    "cwip_pct",
-                    year,
-                    "GREEN",
-                    cwip_pct,
-                    "<0.30",
-                    "CWIP as % of fixed assets is normal.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "B1",
-                "CWIP %",
-                "cwip_pct",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "<0.30",
-                "Insufficient data to evaluate.",
-            )
-        )
+            results.append(RuleResult(
+                rule_id="B1",
+                rule_name="CWIP % Normal",
+                metric="cwip_pct",
+                year=latest_year,
+                flag="GREEN",
+                value=cwip_pct,
+                threshold="<30%",
+                reason="CWIP level normal."
+            ))
 
-    # --------------------------------
-    # B2 – CWIP rising 3 consecutive years
-    # --------------------------------
-    cwip_increasing_3y = cagr_data.get("cwip_increasing_3y")
-    if cwip_increasing_3y is True:
-        results.append(
-            _make(
-                "B2",
-                "CWIP Increasing 3 Years",
-                "cwip",
-                year,
-                "YELLOW",
-                None,
-                "Rise 3 consecutive years",
-                "CWIP has risen 3 consecutive years.",
-            )
-        )
-    elif cwip_increasing_3y is False:
-        results.append(
-            _make(
-                "B2",
-                "CWIP Trend",
-                "cwip",
-                year,
-                "GREEN",
-                None,
-                "Rise 3 consecutive years",
-                "CWIP not increasing for 3 consecutive years.",
-            )
-        )
-    else:
-        results.append(
-            _make(
-                "B2",
-                "CWIP Trend",
-                "cwip",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "Rise 3 consecutive years",
-                "Insufficient data to evaluate CWIP trend.",
-            )
-        )
-
-    # --------------------------------------
-    # B3 – CWIP down + NFA up (rollover)
-    # --------------------------------------
-    cwip_yoy = metrics.get("cwip_yoy")
-    nfa_yoy = metrics.get("nfa_yoy")
-    if cwip_yoy is not None and nfa_yoy is not None and cwip_yoy < 0 and nfa_yoy > 0:
-        results.append(
-            _make(
-                "B3",
-                "CWIP Rollover",
-                "cwip_nfa_rollover",
-                year,
-                "GREEN",
-                None,
-                "CWIP↓ & NFA↑",
-                "Projects capitalized from CWIP into NFA.",
-            )
-        )
-    elif cwip_yoy is None or nfa_yoy is None:
-        results.append(
-            _make(
-                "B3",
-                "CWIP Rollover",
-                "cwip_nfa_rollover",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "CWIP↓ & NFA↑",
-                "No CWIP rollover pattern detected or insufficient data.",
-            )
-        )
-    else:
-        # pattern explicitly *not* present
-        results.append(
-            _make(
-                "B3",
-                "CWIP Rollover",
-                "cwip_nfa_rollover",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "CWIP↓ & NFA↑",
-                "No CWIP rollover pattern detected.",
-            )
-        )
-
-    # -----------------------
-    # C1 – Asset turnover
-    # -----------------------
-    at = metrics.get("asset_turnover")
-    if at is not None:
-        if at < R["asset_turnover_critical"]:
-            results.append(
-                _make(
-                    "C1",
-                    "Asset Turnover Very Low",
-                    "asset_turnover",
-                    year,
-                    "RED",
-                    at,
-                    "<0.7",
-                    "Fixed asset turnover extremely weak.",
-                )
-            )
-        elif at < R["asset_turnover_low"]:
-            results.append(
-                _make(
-                    "C1",
-                    "Asset Turnover Low",
-                    "asset_turnover",
-                    year,
-                    "YELLOW",
-                    at,
-                    "0.7–1.0",
-                    "Fixed asset utilization below optimal.",
-                )
-            )
+    # C1 — Asset Turnover
+    if asset_turnover is not None:
+        if asset_turnover < 0.7:
+            results.append(RuleResult(
+                rule_id="C1",
+                rule_name="Asset Turnover Very Low",
+                metric="asset_turnover",
+                year=latest_year,
+                flag="RED",
+                value=asset_turnover,
+                threshold="<0.7",
+                reason="Very poor utilization of fixed assets."
+            ))
+        elif asset_turnover < 1.0:
+            results.append(RuleResult(
+                rule_id="C1",
+                rule_name="Asset Turnover Low",
+                metric="asset_turnover",
+                year=latest_year,
+                flag="YELLOW",
+                value=asset_turnover,
+                threshold="0.7–1.0",
+                reason="Asset turnover slightly weak."
+            ))
         else:
-            results.append(
-                _make(
-                    "C1",
-                    "Asset Turnover Healthy",
-                    "asset_turnover",
-                    year,
-                    "GREEN",
-                    at,
-                    ">1.0",
-                    "Good utilization of fixed assets.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "C1",
-                "Asset Turnover",
-                "asset_turnover",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                ">1.0",
-                "Insufficient data to evaluate.",
-            )
-        )
+            results.append(RuleResult(
+                rule_id="C1",
+                rule_name="Asset Turnover Healthy",
+                metric="asset_turnover",
+                year=latest_year,
+                flag="GREEN",
+                value=asset_turnover,
+                threshold=">1.0",
+                reason="Good asset utilization."
+            ))
 
-    # --------------------------------------------------------
-    # C2 – NFA rising while revenue stagnant (CAGR comparison)
-    # --------------------------------------------------------
-    nfa_cagr = cagr_data.get("nfa_cagr")
-    revenue_cagr = cagr_data.get("revenue_cagr")
-
-    if nfa_cagr is not None and revenue_cagr is not None:
-        if nfa_cagr > (revenue_cagr + 0.10):
-            results.append(
-                _make(
-                    "C2",
-                    "NFA Growing Too Fast",
-                    "nfa_cagr",
-                    year,
-                    "RED",
-                    nfa_cagr,
-                    "NFA CAGR > Revenue CAGR + 10%",
-                    "Underutilized capacity or stranded assets.",
-                )
-            )
+    # D1 — Debt-funded capex
+    if debt_funded_capex is not None:
+        if debt_funded_capex >= 1.0:
+            results.append(RuleResult(
+                rule_id="D1",
+                rule_name="Fully Debt Funded Capex",
+                metric="debt_funded_capex",
+                year=latest_year,
+                flag="RED",
+                value=debt_funded_capex,
+                threshold=">=1.0",
+                reason="Capex entirely funded by debt."
+            ))
+        elif debt_funded_capex >= 0.5:
+            results.append(RuleResult(
+                rule_id="D1",
+                rule_name="High Debt-Funded Capex",
+                metric="debt_funded_capex",
+                year=latest_year,
+                flag="YELLOW",
+                value=debt_funded_capex,
+                threshold=">=0.5",
+                reason="Significant dependency on debt for capex."
+            ))
         else:
-            results.append(
-                _make(
-                    "C2",
-                    "NFA vs Revenue Growth Normal",
-                    "nfa_cagr",
-                    year,
-                    "GREEN",
-                    nfa_cagr,
-                    "NFA CAGR ≤ Revenue CAGR + 10%",
-                    "NFA growth in line with revenue growth.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "C2",
-                "NFA vs Revenue Growth",
-                "nfa_cagr",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "NFA CAGR > Revenue CAGR + 10%",
-                "Insufficient data to evaluate.",
-            )
-        )
+            results.append(RuleResult(
+                rule_id="D1",
+                rule_name="Low Debt-Funded Capex",
+                metric="debt_funded_capex",
+                year=latest_year,
+                flag="GREEN",
+                value=debt_funded_capex,
+                threshold="<0.5",
+                reason="Capex mostly internally funded."
+            ))
 
-    # -----------------------------
-    # D1 – Debt-funded capex
-    # -----------------------------
-    dfc = metrics.get("debt_funded_capex")
-    if dfc is not None:
-        if dfc >= 1.0:
-            results.append(
-                _make(
-                    "D1",
-                    "Fully Debt Funded Capex",
-                    "debt_funded_capex",
-                    year,
-                    "RED",
-                    dfc,
-                    ">=1.0",
-                    "Capex entirely funded through debt.",
-                )
-            )
-        elif dfc >= R["debt_funded_capex_warning"]:
-            results.append(
-                _make(
-                    "D1",
-                    "Debt-Funded Capex High",
-                    "debt_funded_capex",
-                    year,
-                    "YELLOW",
-                    dfc,
-                    ">=0.5",
-                    "Significant dependency on debt for capex.",
-                )
-            )
+    # D2 — FCF Coverage
+    if fcf_coverage is not None:
+        if fcf_coverage < 0:
+            results.append(RuleResult(
+                rule_id="D2",
+                rule_name="Negative FCF Coverage",
+                metric="fcf_coverage",
+                year=latest_year,
+                flag="RED",
+                value=fcf_coverage,
+                threshold="<0",
+                reason="Capex executed despite negative FCF."
+            ))
+        elif fcf_coverage < 0.5:
+            results.append(RuleResult(
+                rule_id="D2",
+                rule_name="Weak FCF Coverage",
+                metric="fcf_coverage",
+                year=latest_year,
+                flag="YELLOW",
+                value=fcf_coverage,
+                threshold="0–0.5",
+                reason="Limited internal reinvestment capacity."
+            ))
         else:
-            results.append(
-                _make(
-                    "D1",
-                    "Debt-Funded Capex Low",
-                    "debt_funded_capex",
-                    year,
-                    "GREEN",
-                    dfc,
-                    "<0.5",
-                    "Capex mostly internally funded.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "D1",
-                "Debt-Funded Capex",
-                "debt_funded_capex",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                "<0.5",
-                "Insufficient data to evaluate.",
-            )
-        )
-
-    # ------------------------
-    # D2 – FCF coverage
-    # ------------------------
-    fcf_cov = metrics.get("fcf_coverage")
-    if fcf_cov is not None:
-        if fcf_cov < 0:
-            results.append(
-                _make(
-                    "D2",
-                    "Negative FCF Coverage",
-                    "fcf_coverage",
-                    year,
-                    "RED",
-                    fcf_cov,
-                    "<0",
-                    "Capex executed despite negative free cash flow.",
-                )
-            )
-        elif fcf_cov < 0.5:
-            results.append(
-                _make(
-                    "D2",
-                    "Weak FCF Coverage",
-                    "fcf_coverage",
-                    year,
-                    "YELLOW",
-                    fcf_cov,
-                    "0–0.5",
-                    "Limited internal reinvestment capacity.",
-                )
-            )
-        else:
-            results.append(
-                _make(
-                    "D2",
-                    "Strong FCF Coverage",
-                    "fcf_coverage",
-                    year,
-                    "GREEN",
-                    fcf_cov,
-                    ">0.5",
-                    "Capex well supported by free cash flow.",
-                )
-            )
-    else:
-        results.append(
-            _make(
-                "D2",
-                "FCF Coverage",
-                "fcf_coverage",
-                year,
-                "NOT_APPLICABLE",
-                None,
-                ">0.5",
-                "Insufficient data to evaluate.",
-            )
-        )
+            results.append(RuleResult(
+                rule_id="D2",
+                rule_name="Strong FCF Coverage",
+                metric="fcf_coverage",
+                year=latest_year,
+                flag="GREEN",
+                value=fcf_coverage,
+                threshold=">0.5",
+                reason="Capex well funded by FCF."
+            ))
 
     return results
-
-
-# Backward-compatible wrapper if other parts of the code still call `evaluate_rules`
-def evaluate_rules(metrics: Dict[str, Any], cagr_data: Dict[str, Any]) -> List[RuleResult]:
-    """
-    Backward-compatible alias to apply_rules. Prefer calling apply_rules going forward.
-    """
-    return apply_rules(metrics, cagr_data)

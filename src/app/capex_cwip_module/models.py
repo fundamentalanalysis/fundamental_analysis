@@ -1,15 +1,14 @@
 # models.py
 
 from pydantic import BaseModel
-from typing import Any
-
+from typing import Any, Optional
 
 class RuleResult(BaseModel):
-    rule_id: str
+    rule_id: Optional[str] = None
     rule_name: str
-    metric: str
+    metric: Optional[str] = None
     year: int
     flag: str
-    value: Any
-    threshold: str
+    value: Optional[Any] = None
+    threshold: Optional[str] = None
     reason: str
