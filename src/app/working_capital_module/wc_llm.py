@@ -18,6 +18,20 @@ def build_wc_prompt(company, metrics, trends, flags):
     latest = metrics["latest"]
     latest_year = metrics["latest_year"]
 
+    # --------------------------------------
+    # FIX: Extract latest YoY metrics safely
+    # --------------------------------------
+    def get_latest_yoy(metric):
+        yoy_map = trends.get(metric, {}).get("yoy_growth_pct", {})
+        return yoy_map.get("Y_vs_Y-1")
+
+    recent_trend_summary = {
+        "receivables_yoy": get_latest_yoy("trade_receivables"),
+        "inventory_yoy": get_latest_yoy("inventory"),
+        "payables_yoy": get_latest_yoy("trade_payables"),
+        "revenue_yoy": get_latest_yoy("revenue"),
+    }
+
     prompt = f"""
 You are a senior financial analyst specializing in Working Capital & Cash Conversion analysis.
 
@@ -36,8 +50,8 @@ CCC: {latest['ccc']:.2f}
 NWC: {latest['nwc']:.2f}
 NWC Ratio: {latest['nwc_ratio']:.3f}
 
-📌 5-YEAR TRENDS
-Recent YoY Trend: {trends[-1] if trends else "N/A"}
+📌 5-YEAR TRENDS (Latest YoY)
+{json.dumps(recent_trend_summary, indent=2)}
 
 📌 TRIGGERED RULE FLAGS
 {json.dumps(flags, indent=2)}
@@ -47,26 +61,12 @@ YOUR TASKS:
 =====================================
 
 1. **Summarize the working capital story** in 3–6 crisp bullets.
-   - Mention receivables, payables, inventory, CCC, WC stress, trends.
 
 2. **Identify RED FLAGS**
-   - Only include items where flag = "RED".
-   - Output format:
-     {{
-       "severity": "CRITICAL",
-       "title": "...",
-       "detail": "..."
-     }}
 
 3. **Identify POSITIVE POINTS**
-   - Healthy DPO, improving DIO/DSO/CCC, etc.
 
-4. **Generate a SUB-SCORE (0–100)**  
-   Rules:
-   - Base score = 70
-   - RED flag = -10 each
-   - YELLOW flag = -5 each
-   - Limit between 0 and 100
+4. **Generate a SUB-SCORE (0–100)**
 
 5. OUTPUT STRICT JSON EXACTLY IN THIS FORMAT:
 
@@ -90,7 +90,6 @@ STRICT RULES:
 - No extra commentary.
 """
     return prompt
-
 
 
 # -------------------------------------------------------------------
