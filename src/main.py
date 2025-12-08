@@ -48,65 +48,6 @@ DEFAULT_COVENANTS = CovenantLimits(
 DEFAULT_ASSET_BENCHMARKS = IndustryAssetBenchmarks()
 
 
-# ---------- API Request Schemas ----------
-class FinancialYearInput(BaseModel):
-    year: Optional[int]
-    short_term_debt: Optional[float]
-    long_term_debt: Optional[float]
-    total_equity: Optional[float]
-    revenue : Optional[float]
-    ebitda: Optional[float]
-    ebit: Optional[float]
-    finance_cost: Optional[float]
-    capex: Optional[float]
-    cwip: Optional[float]
-    trade_receivables: Optional[float] = None
-    trade_payables: Optional[float] = None
-    inventory: Optional[float] = None
-    revenue: Optional[float] = None
-    cogs: Optional[float] = None
-
-    total_debt_maturing_lt_1y: Optional[float] = None
-    total_debt_maturing_1_3y: Optional[float] = None
-    total_debt_maturing_gt_3y: Optional[float] = None
-
-    weighted_avg_interest_rate: Optional[float] = None
-    floating_rate_debt: Optional[float] = None
-    fixed_rate_debt: Optional[float] = None
-
-
-class FinancialData(BaseModel):
-    financial_years: List[FinancialYearInput]
-
-
-class BorrowingsRequest(BaseModel):
-    company: str
-    industry_code: Optional[str] = "GENERAL"
-    financial_data: FinancialData
-
-
-class AssetFinancialYearRequest(BaseModel):
-    year: int
-    net_block: Optional[float] = 0.0
-    accumulated_depreciation: Optional[float] = 0.0
-    gross_block: Optional[float] = 0.0
-    impairment_loss: Optional[float] = 0.0
-    cwip: Optional[float] = 0.0
-    intangibles: Optional[float] = 0.0
-    goodwill: Optional[float] = 0.0
-    revenue: Optional[float] = 0.0
-    intangible_amortization: Optional[float] = 0.0
-    r_and_d_expenses: Optional[float] = 0.0
-
-
-class AssetFinancialData(BaseModel):
-    financial_years: List[AssetFinancialYearRequest]
-
-
-class AssetQualityRequest(BaseModel):
-    company: str
-    industry_code: Optional[str] = "GENERAL"
-    financial_data: AssetFinancialData
 
 
 # ---------- FastAPI App ----------
@@ -123,15 +64,15 @@ asset_quality_engine = AssetIntangibleQualityModule()
 @app.post("/borrowings/analyze")
 async def analyze_borrowings(req: Request):
     try:
-        req = BorrowingsRequest(**await req.json())
+        req = await req.json()
         financial_years = [
-            YearFinancialInput(**fy.dict())
-            for fy in req.financial_data.financial_years
+            YearFinancialInput(**fy)
+            for fy in req["financial_data"]["financial_years"]
         ]
 
         module_input = BorrowingsInput(
-            company_id=req.company.upper(),
-            industry_code=(req.industry_code or "GENERAL").upper(),
+            company_id=req["company"].upper(),
+            industry_code=(req["industry_code"] if "industry_code" in req else "GENERAL").upper(),
             financials_5y=financial_years,
             industry_benchmarks=DEFAULT_BENCHMARKS,
             covenant_limits=DEFAULT_COVENANTS,
@@ -147,10 +88,10 @@ async def analyze_borrowings(req: Request):
 @app.post("/asset_quality/analyze")
 async def analyze_asset_quality(req: Request):
     try:
-        req = AssetQualityRequest(**await req.json())
+        req = await req.json()
         financial_years = [
-            AssetFinancialYearInput(**fy.dict())
-            for fy in req.financial_data.financial_years
+            AssetFinancialYearInput(**fy)
+            for fy in req["financial_data"]["financial_years"]
         ]
 
         module_input = AssetQualityInput(
