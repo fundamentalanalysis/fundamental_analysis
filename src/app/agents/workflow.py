@@ -34,6 +34,7 @@ class AnalysisState(TypedDict):
     """State object passed through the workflow"""
     # Input data
     company: str
+    year: Optional[int]  # Current financial year
     current_data: Dict[str, float]
     historical_data: List[Dict[str, float]]
     
@@ -96,22 +97,24 @@ def run_module_node(module_id: str):
             result = agent.analyze(
                 data=state["current_data"],
                 historical_data=state.get("historical_data"),
-                generate_llm_narrative=state.get("generate_narrative", True)
+                generate_llm_narrative=state.get("generate_narrative", True),
+                company_name=state.get("company"),
+                year=state.get("year")
             )
             
             # Extract risk flags from RED rules
-            red_rules = [r for r in result.rules_results if r.status == "RED"]
+            red_rules = [r for r in result.rules if r.flag == "RED"]
             risk_flags = []
             for rule in red_rules:
-                flag = f"[{module_id.upper()}] {rule.rule_name}: {rule.summary or rule.message}"
+                flag = f"[{module_id.upper()}] {rule.rule_name}: {rule.reason}"
                 risk_flags.append(flag)
             
-            # Extract key insights from GREEN rules with good scores
+            # Extract key insights from GREEN rules
             key_insights = []
-            green_rules = [r for r in result.rules_results if r.status == "GREEN"]
+            green_rules = [r for r in result.rules if r.flag == "GREEN"]
             for rule in green_rules[:2]:  # Top 2 green rules
-                if rule.summary:
-                    key_insights.append(f"[{module_id.upper()}] ✓ {rule.summary}")
+                if rule.reason:
+                    key_insights.append(f"[{module_id.upper()}] ✓ {rule.reason}")
             
             return {
                 "module_results": {**state.get("module_results", {}), module_id: result.model_dump()},
@@ -313,7 +316,8 @@ class AnalysisWorkflow:
         historical_data: Optional[List[Dict[str, float]]] = None,
         modules: Optional[List[str]] = None,
         generate_narrative: bool = True,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        year: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Run the analysis workflow.
@@ -325,6 +329,7 @@ class AnalysisWorkflow:
             modules: List of modules to run (None = all enabled)
             generate_narrative: Whether to generate LLM narratives
             thread_id: Thread ID for checkpointing
+            year: Current financial year (e.g., 2024)
             
         Returns:
             Complete analysis result
@@ -343,6 +348,7 @@ class AnalysisWorkflow:
         # Initial state
         initial_state: AnalysisState = {
             "company": company,
+            "year": year,
             "current_data": current_data,
             "historical_data": historical_data or [],
             "modules_to_run": modules_to_run,
@@ -372,6 +378,7 @@ class AnalysisWorkflow:
         
         return {
             "company": company,
+            "year": year,
             "workflow_status": final_state.get("workflow_status"),
             "modules_completed": final_state.get("modules_completed", []),
             "modules_failed": final_state.get("modules_failed", []),
@@ -390,7 +397,8 @@ class AnalysisWorkflow:
         historical_data: Optional[List[Dict[str, float]]] = None,
         modules: Optional[List[str]] = None,
         generate_narrative: bool = True,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        year: Optional[int] = None
     ) -> Dict[str, Any]:
         """Async version of run"""
         import uuid
@@ -405,6 +413,7 @@ class AnalysisWorkflow:
         
         initial_state: AnalysisState = {
             "company": company,
+            "year": year,
             "current_data": current_data,
             "historical_data": historical_data or [],
             "modules_to_run": modules_to_run,
@@ -430,6 +439,7 @@ class AnalysisWorkflow:
         
         return {
             "company": company,
+            "year": year,
             "workflow_status": final_state.get("workflow_status"),
             "modules_completed": final_state.get("modules_completed", []),
             "modules_failed": final_state.get("modules_failed", []),
@@ -448,7 +458,8 @@ class AnalysisWorkflow:
         historical_data: Optional[List[Dict[str, float]]] = None,
         modules: Optional[List[str]] = None,
         generate_narrative: bool = True,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        year: Optional[int] = None
     ):
         """
         Stream workflow execution, yielding state after each step.
@@ -467,6 +478,7 @@ class AnalysisWorkflow:
         
         initial_state: AnalysisState = {
             "company": company,
+            "year": year,
             "current_data": current_data,
             "historical_data": historical_data or [],
             "modules_to_run": modules_to_run,

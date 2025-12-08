@@ -104,6 +104,7 @@ class AnalyzeRequest(BaseModel):
     financial_data: FinancialData
     modules: Optional[List[str]] = None  # Optional: specify which modules to run
     generate_narrative: bool = True  # Whether to generate LLM narratives
+    year: Optional[int] = None  # Current financial year for analysis (e.g., 2024)
 
 
 # ---------------------------------------------------------

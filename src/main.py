@@ -430,6 +430,9 @@ def analyze(req: AnalyzeRequest):
         current_data = financial_year_to_dict(sorted_fds[0])
         historical_data = prepare_historical_data(fds)
         
+        # Determine the year - use provided year or most recent from data
+        year = req.year if req.year else sorted_fds[0].year
+        
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
@@ -441,11 +444,13 @@ def analyze(req: AnalyzeRequest):
             current_data=current_data,
             historical_data=historical_data,
             modules=modules,
-            generate_narrative=req.generate_narrative
+            generate_narrative=req.generate_narrative,
+            year=year
         )
         
         return {
             "company": company,
+            "year": year,
             "workflow_status": result.get("workflow_status"),
             "overall_score": result.get("overall_score"),
             "modules_completed": result.get("modules_completed"),
@@ -482,6 +487,7 @@ async def analyze_stream(req: AnalyzeRequest):
     sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
     current_data = financial_year_to_dict(sorted_fds[0])
     historical_data = prepare_historical_data(fds)
+    year = req.year if req.year else sorted_fds[0].year
     
     async def generate():
         try:
@@ -490,7 +496,8 @@ async def analyze_stream(req: AnalyzeRequest):
                 current_data=current_data,
                 historical_data=historical_data,
                 modules=req.modules,
-                generate_narrative=req.generate_narrative
+                generate_narrative=req.generate_narrative,
+                year=year
             ):
                 # Send state update as SSE
                 yield f"data: {json.dumps(state_update)}\n\n"

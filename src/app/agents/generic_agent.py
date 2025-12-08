@@ -21,21 +21,27 @@ from src.app.config import load_agents_config, get_module_config, OPENAI_MODEL, 
 # ---------------------------------------------------------------------------
 
 class RuleResult(BaseModel):
-    """Single rule evaluation result with investor insights"""
+    """Single rule evaluation result - detailed format"""
     rule_id: str
     rule_name: str
-    metric_name: str
+    metric: str
+    year: Optional[int] = None
+    flag: str  # "RED", "YELLOW", "GREEN", "NEUTRAL"
     value: float
-    status: str  # "RED", "YELLOW", "GREEN", "NEUTRAL"
-    benchmark: Optional[str] = None
-    message: str
-    condition_met: bool = True  # Indicates if a threshold condition was triggered
-    # Enhanced insight fields
-    summary: Optional[str] = None
+    threshold: str
+    reason: str
+    # Keep enhanced insight fields as optional
     implication: Optional[str] = None
     investor_action: Optional[str] = None
     risk_level: Optional[str] = None
     peer_context: Optional[str] = None
+
+
+class TrendDetail(BaseModel):
+    """Detailed trend with YoY breakdown"""
+    values: Dict[str, float]  # {"Y": 100, "Y-1": 90, "Y-2": 80, ...}
+    yoy_growth_pct: Dict[str, float]  # {"Y_vs_Y-1": 11.1, "Y-1_vs_Y-2": 12.5, ...}
+    insight: str
 
 
 class TrendResult(BaseModel):
@@ -46,16 +52,19 @@ class TrendResult(BaseModel):
 
 
 class ModuleOutput(BaseModel):
-    """Universal output for any module"""
-    module_name: str
-    module_id: str
-    timestamp: str
-    metrics: Dict[str, float]
-    rules_results: List[RuleResult]
-    trends: List[TrendResult]
+    """Universal output for any module - detailed format"""
+    module: str
+    company: Optional[str] = None
+    year: Optional[int] = None
+    key_metrics: Dict[str, Any]
+    trends: Dict[str, TrendDetail]
+    analysis_narrative: List[str]
+    red_flags: List[str]
+    positive_points: List[str]
+    rules: List[RuleResult]
     score: int
     score_interpretation: str
-    llm_narrative: str
+    llm_narrative: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -404,10 +413,10 @@ class GenericAgent:
     # RULES EVALUATION
     # -----------------------------------------------------------------------
     
-    def evaluate_rules(self, metrics: Dict[str, float]) -> List[RuleResult]:
+    def evaluate_rules(self, metrics: Dict[str, float], year: Optional[int] = None) -> List[RuleResult]:
         """
         Evaluate all rules from config against calculated metrics.
-        Returns rich insights for each rule based on status.
+        Returns detailed rule results with threshold and reason.
         All rules are included in response, even if no condition is met.
         """
         results = []
@@ -420,19 +429,18 @@ class GenericAgent:
             # Get metric value
             value = metrics.get(metric_name, 0)
             
-            # Evaluate thresholds and get insights (now returns 4-tuple with condition_met)
-            status, message, insights, condition_met = self._evaluate_rule_with_insights(rule, value)
+            # Evaluate thresholds and get insights
+            flag, threshold_str, reason, insights = self._evaluate_rule_with_insights(rule, value, metrics)
             
             results.append(RuleResult(
                 rule_id=rule_id,
                 rule_name=rule_name,
-                metric_name=metric_name,
-                value=round(value, 4),
-                status=status,
-                benchmark=f"Red: {rule.get('red', '-')}, Yellow: {rule.get('yellow', '-')}, Green: {rule.get('green', '-')}",
-                message=message,
-                condition_met=condition_met,
-                summary=insights.get("summary"),
+                metric=metric_name,
+                year=year,
+                flag=flag,
+                value=round(value, 6),
+                threshold=threshold_str,
+                reason=reason,
                 implication=insights.get("implication"),
                 investor_action=insights.get("investor_action"),
                 risk_level=insights.get("risk_level"),
@@ -441,9 +449,9 @@ class GenericAgent:
         
         return results
     
-    def _evaluate_rule_with_insights(self, rule: Dict, value: float) -> tuple:
+    def _evaluate_rule_with_insights(self, rule: Dict, value: float, metrics: Dict[str, float] = None) -> tuple:
         """
-        Evaluate a single rule and return (status, message, insights dict, condition_met).
+        Evaluate a single rule and return (flag, threshold_str, reason, insights dict).
         Extracts rich insights from YAML config based on status.
         Always returns a result even if no conditions are met.
         """
@@ -451,53 +459,50 @@ class GenericAgent:
         yellow_cond = rule.get("yellow", "")
         green_cond = rule.get("green", "")
         insights_config = rule.get("insights", {})
+        rule_name = rule.get("name", "")
         
         # Helper to get peer_context with fallback to other status levels
         def get_peer_context(primary_insights: Dict) -> str:
-            # First try the primary insights (current status)
             if primary_insights.get("peer_context"):
                 return primary_insights["peer_context"]
-            # Fallback: check all status levels for peer_context
             for status in ["red", "yellow", "green"]:
                 status_insights = insights_config.get(status, {})
                 if status_insights.get("peer_context"):
                     return status_insights["peer_context"]
-            # Default peer context based on rule name
-            return f"Compare with industry peers for {rule.get('name', 'this metric')}"
+            return f"Compare with industry peers for {rule_name}"
+        
+        # Build threshold string
+        def build_threshold_str(triggered_cond: str) -> str:
+            return triggered_cond if triggered_cond and triggered_cond != "-" else "N/A"
         
         # Check RED condition first
         if self._check_condition(value, red_cond):
-            insights = insights_config.get("red", {})
-            summary = insights.get("summary", f"{rule.get('name', '')} is in critical zone")
-            # Ensure peer_context is populated
+            insights = insights_config.get("red", {}).copy()
             insights["peer_context"] = get_peer_context(insights)
-            return "RED", f"{summary} (Value: {self._format_value(value)})", insights, True
+            reason = insights.get("summary", f"{rule_name} is in critical zone")
+            return "RED", build_threshold_str(red_cond), reason, insights
         
         # Check YELLOW condition
         if self._check_condition(value, yellow_cond):
-            insights = insights_config.get("yellow", {})
-            summary = insights.get("summary", f"{rule.get('name', '')} needs attention")
-            # Ensure peer_context is populated
+            insights = insights_config.get("yellow", {}).copy()
             insights["peer_context"] = get_peer_context(insights)
-            return "YELLOW", f"{summary} (Value: {self._format_value(value)})", insights, True
+            reason = insights.get("summary", f"{rule_name} needs attention")
+            return "YELLOW", build_threshold_str(yellow_cond), reason, insights
         
         # Check GREEN condition explicitly
         if self._check_condition(value, green_cond):
-            insights = insights_config.get("green", {})
-            summary = insights.get("summary", f"{rule.get('name', '')} is healthy")
-            # Ensure peer_context is populated
+            insights = insights_config.get("green", {}).copy()
             insights["peer_context"] = get_peer_context(insights)
-            return "GREEN", f"{summary} (Value: {self._format_value(value)})", insights, True
+            reason = insights.get("summary", f"{rule_name} is healthy")
+            return "GREEN", build_threshold_str(green_cond), reason, insights
         
-        # No condition met - return NEUTRAL status with the actual value
-        # This ensures all rules are displayed even when conditions aren't met
-        return "NEUTRAL", f"Value: {self._format_value(value)} - No threshold condition triggered", {
-            "summary": f"Metric value is {self._format_value(value)}",
-            "implication": "Value does not match any defined threshold conditions (red/yellow/green)",
-            "investor_action": "Review if threshold conditions in configuration cover this value range",
+        # No condition met - return NEUTRAL status
+        return "NEUTRAL", "No threshold triggered", f"Value: {self._format_value(value)}", {
+            "implication": "Value does not match any defined threshold conditions",
+            "investor_action": "Review threshold configuration",
             "risk_level": "Not Assessed",
             "peer_context": get_peer_context({})
-        }, False
+        }
     
     def _format_value(self, value: float) -> str:
         """Format value appropriately based on magnitude"""
@@ -662,8 +667,7 @@ class GenericAgent:
         """
         Calculate overall module score based on rule results.
         
-        Only rules with triggered conditions (condition_met=True) affect the score.
-        NEUTRAL status rules are displayed but don't impact scoring.
+        NEUTRAL status rules don't impact scoring.
         
         Returns:
             (score, interpretation)
@@ -678,16 +682,13 @@ class GenericAgent:
         score = base_score
         
         for result in rules_results:
-            # Only apply scoring for rules where a condition was met
-            if not result.condition_met:
-                continue  # NEUTRAL status - skip scoring
-                
-            if result.status == "RED":
+            if result.flag == "RED":
                 score -= red_penalty
-            elif result.status == "YELLOW":
+            elif result.flag == "YELLOW":
                 score -= yellow_penalty
-            elif result.status == "GREEN":
+            elif result.flag == "GREEN":
                 score += green_bonus
+            # NEUTRAL - no scoring impact
         
         score = max(min_score, min(max_score, score))
         
@@ -703,7 +704,7 @@ class GenericAgent:
     # -----------------------------------------------------------------------
     
     def generate_narrative(self, metrics: Dict[str, float], rules_results: List[RuleResult], 
-                          trends: List[TrendResult], score: int) -> str:
+                          trends: Dict[str, TrendDetail], score: int) -> str:
         """
         Generate LLM narrative using configured agent prompt.
         """
@@ -711,9 +712,14 @@ class GenericAgent:
             client = get_llm_client()
             
             # Build context
-            metrics_str = "\n".join([f"- {k}: {v:.4f}" for k, v in metrics.items()])
-            rules_str = "\n".join([f"- {r.rule_name}: {r.status} ({r.message})" for r in rules_results])
-            trends_str = "\n".join([f"- {t.name}: {t.value:.2%} ({t.interpretation})" for t in trends]) if trends else "No trend data"
+            metrics_str = "\n".join([f"- {k}: {v:.4f}" if isinstance(v, float) else f"- {k}: {v}" for k, v in metrics.items()])
+            rules_str = "\n".join([f"- {r.rule_name}: {r.flag} - {r.reason}" for r in rules_results])
+            
+            # Format trends
+            if trends:
+                trends_str = "\n".join([f"- {name}: {detail.insight}" for name, detail in trends.items()])
+            else:
+                trends_str = "No trend data"
             
             sections_guidance = "\n".join([f"- {s}" for s in self.output_sections]) if self.output_sections else ""
             
@@ -756,17 +762,20 @@ Keep the analysis concise but insightful.
     # -----------------------------------------------------------------------
     
     def analyze(self, data: Dict[str, float], historical_data: Optional[List[Dict[str, float]]] = None,
-                generate_llm_narrative: bool = True) -> ModuleOutput:
+                generate_llm_narrative: bool = True, company_name: Optional[str] = None,
+                year: Optional[int] = None) -> ModuleOutput:
         """
         Main entry point: Run complete analysis for this module.
         
         Args:
             data: Current period financial data
-            historical_data: List of historical periods (oldest first)
+            historical_data: List of historical periods (oldest first) - Y-4, Y-3, Y-2, Y-1, Y
             generate_llm_narrative: Whether to generate LLM narrative
+            company_name: Name of the company being analyzed
+            year: Current financial year (e.g., 2024)
             
         Returns:
-            ModuleOutput with all analysis results
+            ModuleOutput with detailed analysis results
         """
         # 1. Calculate metrics
         metrics = self.calculate_metrics(data)
@@ -776,28 +785,213 @@ Keep the analysis concise but insightful.
             trend_metrics = self._calculate_trend_comparison_metrics(historical_data)
             metrics.update(trend_metrics)
         
-        # 3. Evaluate rules
-        rules_results = self.evaluate_rules(metrics)
+        # 3. Evaluate rules with year
+        rules_results = self.evaluate_rules(metrics, year)
         
-        # 4. Calculate trends
-        trends = self.calculate_trends(historical_data) if historical_data else []
+        # 4. Calculate detailed trends with YoY breakdown
+        detailed_trends = self._calculate_detailed_trends(historical_data) if historical_data else {}
         
-        # 5. Calculate score
+        # 5. Calculate CAGR trends for key_metrics
+        cagr_trends = self._calculate_cagr_metrics(historical_data) if historical_data else {}
+        
+        # 6. Calculate score
         score, interpretation = self.calculate_score(rules_results)
         
-        # 6. Generate narrative
-        narrative = ""
+        # 7. Build key_metrics with year and CAGRs
+        key_metrics = {"year": year} if year else {}
+        key_metrics.update(metrics)
+        key_metrics.update(cagr_trends)
+        
+        # 8. Generate analysis narrative bullets
+        analysis_narrative = self._generate_analysis_narrative(metrics, cagr_trends, rules_results)
+        
+        # 9. Extract red_flags and positive_points from rules
+        red_flags = [r.reason for r in rules_results if r.flag == "RED"]
+        positive_points = [r.reason for r in rules_results if r.flag == "GREEN"]
+        
+        # 10. Generate LLM narrative if requested
+        narrative = None
         if generate_llm_narrative:
-            narrative = self.generate_narrative(metrics, rules_results, trends, score)
+            narrative = self.generate_narrative(metrics, rules_results, detailed_trends, score)
         
         return ModuleOutput(
-            module_name=self.name,
-            module_id=self.module_id,
-            timestamp=datetime.utcnow().isoformat(),
-            metrics=metrics,
-            rules_results=rules_results,
-            trends=trends,
+            module=self.name,
+            company=company_name,
+            year=year,
+            key_metrics=key_metrics,
+            trends=detailed_trends,
+            analysis_narrative=analysis_narrative,
+            red_flags=red_flags,
+            positive_points=positive_points,
+            rules=rules_results,
             score=score,
             score_interpretation=interpretation,
             llm_narrative=narrative
         )
+    
+    def _calculate_detailed_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, TrendDetail]:
+        """
+        Calculate detailed trends with YoY breakdown for each metric.
+        
+        Args:
+            historical_data: List of dicts, oldest first (Y-4, Y-3, Y-2, Y-1, Y)
+            
+        Returns:
+            Dict of metric name -> TrendDetail with values, yoy_growth, and insight
+        """
+        if not historical_data or len(historical_data) < 2:
+            return {}
+        
+        detailed_trends = {}
+        n = len(historical_data)
+        
+        # Fields to track for trends based on module
+        trend_fields = self._get_trend_fields()
+        
+        for field_name, display_name in trend_fields.items():
+            values = {}
+            yoy_growth = {}
+            
+            # Extract values for each year (reverse so Y is current)
+            for i, data in enumerate(reversed(historical_data)):
+                year_label = "Y" if i == 0 else f"Y-{i}"
+                val = data.get(field_name, 0)
+                values[year_label] = val
+            
+            # Calculate YoY growth
+            year_labels = list(values.keys())
+            for i in range(len(year_labels) - 1):
+                current_label = year_labels[i]
+                prev_label = year_labels[i + 1]
+                current_val = values[current_label]
+                prev_val = values[prev_label]
+                
+                if prev_val and prev_val != 0:
+                    growth = ((current_val - prev_val) / abs(prev_val)) * 100
+                    yoy_growth[f"{current_label}_vs_{prev_label}"] = round(growth, 2)
+            
+            # Generate insight
+            insight = self._generate_trend_insight(display_name, values, yoy_growth)
+            
+            if values and any(v != 0 for v in values.values()):
+                detailed_trends[field_name] = TrendDetail(
+                    values=values,
+                    yoy_growth_pct=yoy_growth,
+                    insight=insight
+                )
+        
+        return detailed_trends
+    
+    def _get_trend_fields(self) -> Dict[str, str]:
+        """Get fields to track for trends based on module type"""
+        if self.module_id == "borrowings":
+            return {
+                "short_term_debt": "Short Term Debt",
+                "long_term_debt": "Long Term Debt",
+                "finance_cost": "Finance Cost",
+                "total_debt": "Total Debt",
+                "ebitda": "EBITDA"
+            }
+        elif self.module_id == "equity_funding_mix":
+            return {
+                "reserves_and_surplus": "Retained Earnings",
+                "net_worth": "Net Worth",
+                "pat": "PAT",
+                "share_capital": "Share Capital"
+            }
+        else:
+            # Default fields
+            return {
+                "revenue": "Revenue",
+                "pat": "PAT",
+                "ebitda": "EBITDA"
+            }
+    
+    def _generate_trend_insight(self, metric_name: str, values: Dict[str, float], 
+                                yoy_growth: Dict[str, float]) -> str:
+        """Generate insight text for a trend"""
+        if not yoy_growth:
+            return f"Insufficient data for {metric_name} trend analysis."
+        
+        growth_values = list(yoy_growth.values())
+        avg_growth = sum(growth_values) / len(growth_values)
+        
+        # Determine pattern
+        if len(growth_values) >= 2:
+            if growth_values[0] > growth_values[-1] + 2:
+                pattern = "accelerating growth"
+            elif growth_values[0] < growth_values[-1] - 2:
+                pattern = "decelerating growth"
+            elif all(g > 0 for g in growth_values):
+                pattern = "consistent growth"
+            elif all(g < 0 for g in growth_values):
+                pattern = "consistent decline"
+            else:
+                pattern = "mixed trend"
+        else:
+            pattern = "limited data"
+        
+        return f"{metric_name} shows {pattern} pattern (avg: {avg_growth:.1f}%)."
+    
+    def _calculate_cagr_metrics(self, historical_data: List[Dict[str, float]]) -> Dict[str, float]:
+        """Calculate CAGR for key metrics"""
+        if not historical_data or len(historical_data) < 2:
+            return {}
+        
+        cagr_metrics = {}
+        n = len(historical_data)
+        
+        # Fields to calculate CAGR for
+        cagr_fields = {
+            "total_debt": "debt_cagr",
+            "ebitda": "ebitda_cagr",
+            "finance_cost": "finance_cost_cagr",
+            "revenue": "revenue_cagr",
+            "pat": "pat_cagr",
+            "net_worth": "networth_cagr"
+        }
+        
+        # Calculate total_debt if not present
+        for d in historical_data:
+            if "total_debt" not in d or d.get("total_debt", 0) == 0:
+                d["total_debt"] = d.get("short_term_debt", 0) + d.get("long_term_debt", 0)
+        
+        for field, cagr_name in cagr_fields.items():
+            start_val = historical_data[0].get(field, 0)
+            end_val = historical_data[-1].get(field, 0)
+            
+            if start_val and start_val > 0 and end_val:
+                cagr = ((end_val / start_val) ** (1 / (n - 1)) - 1) * 100
+                cagr_metrics[cagr_name] = round(cagr, 2)
+        
+        return cagr_metrics
+    
+    def _generate_analysis_narrative(self, metrics: Dict[str, float], cagr_metrics: Dict[str, float],
+                                     rules_results: List[RuleResult]) -> List[str]:
+        """Generate bullet-point analysis narrative"""
+        narrative = []
+        
+        if self.module_id == "borrowings":
+            debt_cagr = cagr_metrics.get("debt_cagr", 0)
+            ebitda_cagr = cagr_metrics.get("ebitda_cagr", 0)
+            debt_ebitda = metrics.get("debt_ebitda", 0)
+            icr = metrics.get("interest_coverage", 0)
+            maturity_lt_1y = metrics.get("maturity_lt_1y_pct", 0) * 100
+            floating = metrics.get("floating_share", 0) * 100
+            
+            narrative.append(f"Total debt CAGR {debt_cagr:.1f}% vs EBITDA CAGR {ebitda_cagr:.1f}%.")
+            narrative.append(f"Debt/EBITDA at {debt_ebitda:.1f}x.")
+            narrative.append(f"Interest coverage at {icr:.1f}x.")
+            narrative.append(f"{maturity_lt_1y:.0f}% of debt matures within one year.")
+            narrative.append(f"Floating rate exposure at {floating:.0f}%.")
+            
+        elif self.module_id == "equity_funding_mix":
+            roe = metrics.get("roe", 0) * 100
+            payout = metrics.get("dividend_payout_ratio", 0) * 100
+            de_ratio = metrics.get("debt_to_equity", 0)
+            
+            narrative.append(f"Return on Equity at {roe:.1f}%.")
+            narrative.append(f"Dividend payout ratio at {payout:.1f}%.")
+            narrative.append(f"Debt-to-Equity ratio at {de_ratio:.2f}x.")
+        
+        return narrative
