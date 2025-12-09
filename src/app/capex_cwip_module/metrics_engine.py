@@ -29,9 +29,14 @@ def compute_year_metrics(current: dict, prev: dict | None) -> dict:
     #     Your input uses "fixed_assets_purchased" (negative value).
     #     Convert to positive capex.
     # -----------------------------------------------------------
+    # if current.get("capex") is None:
+    #     fa = current.get("fixed_assets_purchased")
+    #     current["capex"] = abs(fa) if fa is not None else 0
+
+    # capex = current["capex"]
+
     if current.get("capex") is None:
-        fa = current.get("fixed_assets_purchased")
-        current["capex"] = abs(fa) if fa is not None else 0
+        current["capex"]  = current.get("fixed_assets_purchased")
 
     capex = current["capex"]
 

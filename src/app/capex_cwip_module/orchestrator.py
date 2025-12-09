@@ -35,7 +35,7 @@ class CapexCwipModule:
         trend_input = {fy["year"]: fy for fy in financials}
         trend_metrics = compute_trends(trend_input)
 
-        # 3) Rules
+        # 3) Rules       
         rule_results = apply_rules(per_year_metrics, trend_metrics)
 
         # 4) Latest year
@@ -64,23 +64,38 @@ class CapexCwipModule:
         }
 
         # 7) Trends summary
+       # Utility to convert series → {"Y": ..., "Y-1": ..., ...}
+        def as_labeled_dict(values):
+            labels = ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]
+            values = list(values)[-5:]        # latest 5 years
+            labels = labels[:len(values)]     # match length
+            return {labels[i]: values[-(i+1)] for i in range(len(values))}
+
+        # Utility for YoY growth → {"Y_vs_Y-1": ..., ...}
+        def as_yoy_dict(values):
+            labels = ["Y_vs_Y-1", "Y-1_vs_Y-2", "Y-2_vs_Y-3", "Y-3_vs_Y-4"]
+            values = list(values)[-4:]
+            labels = labels[:len(values)]
+            return {labels[i]: values[-(i+1)] for i in range(len(values))}
+            
+
         trend_summary = {
-            "cwip": {
-                "values": trend_metrics["cwip_series"],
-                "yoy_growth_pct": trend_metrics["cwip_yoy"],
+            "capex": {
+                "values": as_labeled_dict(trend_metrics["capex_series"]),
+                "yoy_growth_pct": as_yoy_dict(trend_metrics["capex_yoy"]),
                 "insight": None
             },
-            "capex": {
-                "values": trend_metrics["capex_series"],
-                "yoy_growth_pct": trend_metrics["capex_yoy"],
+            "cwip": {
+                "values": as_labeled_dict(trend_metrics["cwip_series"]),
+                "yoy_growth_pct": as_yoy_dict(trend_metrics["cwip_yoy"]),
                 "insight": None
             },
             "nfa": {
-                "values": trend_metrics["nfa_series"],
-                "yoy_growth_pct": trend_metrics["nfa_yoy"],
+                "values": as_labeled_dict(trend_metrics["nfa_series"]),
+                "yoy_growth_pct": as_yoy_dict(trend_metrics["nfa_yoy"]),
                 "insight": None
-            },
-        }
+            }
+        }       
 
         # 8) Deterministic fallback notes
         deterministic_notes = [

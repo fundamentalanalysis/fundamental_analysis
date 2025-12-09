@@ -25,24 +25,44 @@
 # trend_engine.py
 
 from typing import Dict, List, Optional
+from typing import Optional
 
+# def compute_cagr(start, end, years) -> Optional[float]:
+#     """
+#     Reference-style CAGR:
+#     CAGR = (end/start)^(1/years) - 1
+#     Returns percent (%), not ratio.
+#     """
+#     if start in (None, 0) or end in (None, 0) or start <= 0 or years <= 0:
+#         return None
+#     return ((end / start) ** (1 / years) - 1) * 100
 
 def compute_cagr(start, end, years) -> Optional[float]:
     """
-    Reference-style CAGR:
     CAGR = (end/start)^(1/years) - 1
-    Returns percent (%), not ratio.
+    Returns percent (%), supports negative-to-negative capex contraction.
     """
-    if start in (None, 0) or end in (None, 0) or start <= 0 or years <= 0:
+    if start is None or end is None or years <= 0:
         return None
-    return ((end / start) ** (1 / years) - 1) * 100
+
+    # If start is zero, CAGR is undefined
+    if start == 0:
+        return None
+
+    # Same sign case (both positive OR both negative)
+    if start * end > 0:
+        cagr =((end / start) ** (1 / years)) - 1
+        return cagr * 100
+
+    # Mixed sign case: economically undefined for CAGR
+    return None
 
 
 def compute_yoy(current, previous) -> Optional[float]:
     """Reference-style YoY growth in %."""
     if previous in (None, 0) or current is None:
         return None
-    return (current - previous) / previous * 100
+    return (current - previous) / abs(previous) * 100
 
 
 def _series(years: List[int], yearly: Dict[int, dict], key: str) -> List[Optional[float]]:
@@ -105,7 +125,9 @@ def compute_trends(yearly: Dict[int, dict]) -> Dict[str, any]:
 
     first_year = years[0]
     last_year = years[-1]
-    num_years = len(years) - 1
+    num_years = len(years) 
+
+    # print(yearly)
 
     # ------------------
     # CAGR calculations
@@ -115,6 +137,8 @@ def compute_trends(yearly: Dict[int, dict]) -> Dict[str, any]:
 
     capex_cagr = compute_cagr(yearly[first_year].get("capex"),
                               yearly[last_year].get("capex"), num_years)
+    # print("yearly[first_year].get('capex'):", yearly[first_year].get("capex") , "yearly[last_year].get('capex'):", yearly[last_year].get("capex"))
+    # print("CAPEX CAGR:", capex_cagr)
 
     nfa_cagr = compute_cagr(yearly[first_year].get("net_fixed_assets"),
                             yearly[last_year].get("net_fixed_assets"), num_years)
