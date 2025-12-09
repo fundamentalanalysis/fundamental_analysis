@@ -13,12 +13,13 @@ class CapexCwipModule:
 
     def run(self, payload):
 
-        company = payload.company
-        finyrs = payload.financial_data.financial_years
+        company = payload["company"]
+        finyrs = payload["financial_data"]["financial_years"]
+        print(f"DEBUG: Running CapexCWIP module for company: {company}")
 
         # Convert models → dicts
         financials = sorted(
-            [fy.dict() for fy in finyrs],
+            [fy for fy in finyrs],
             key=lambda x: x["year"]
         )
 
@@ -49,7 +50,7 @@ class CapexCwipModule:
 
         # 6) Key metrics
         latest = per_year_metrics[latest_year]
-
+        print(f"DEBUG: Latest Metrics: {latest}")
         key_metrics = {
             "year": latest_year,
             "capex_intensity": latest["capex_intensity"],
