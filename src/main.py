@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from fastapi import Request
+from src.app.request_model import AnalysisRequest
 from src.app.working_capital_module.wc_orchestrator import run_working_capital_module
 
 # Ensure package imports work when running `python src/main.py`
@@ -68,21 +69,15 @@ DEFAULT_COVENANTS = CovenantLimits(
 
 DEFAULT_ASSET_BENCHMARKS = IndustryAssetBenchmarks()
 
-# ---------- FastAPI App ----------
-app = FastAPI(
-    title="Financial Analytical Engine",
-    version="1.1",
-    description="Multi-module financial analysis system (Borrowings, Asset Quality)",
-)
 
 borrowings_engine = BorrowingsModule()
 asset_quality_engine = AssetIntangibleQualityModule()
 
 
 @app.post("/borrowings/analyze")
-async def analyze_borrowings(req: Request):
+async def analyze_borrowings(req: AnalysisRequest):
     try:
-        req = await req.json()
+        req = req.dict()
         financial_years = [
             YearFinancialInput(**fy)
             for fy in req["financial_data"]["financial_years"]
@@ -104,9 +99,9 @@ async def analyze_borrowings(req: Request):
 
 
 @app.post("/asset_quality/analyze")
-async def analyze_asset_quality(req: Request):
+async def analyze_asset_quality(req: AnalysisRequest):
     try:
-        req = await req.json()
+        req = req.dict()
         financial_years = [
             AssetFinancialYearInput(**fy)
             for fy in req["financial_data"]["financial_years"]
@@ -126,9 +121,9 @@ async def analyze_asset_quality(req: Request):
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/working_capital_module/analyze")
-async def analyze(request: Request):
+async def analyze(request: AnalysisRequest):
     try:
-        input_data = await request.json()
+        input_data = request.dict()
         print("Input to WC Module:", input_data)
 
         result = run_working_capital_module(input_data)
@@ -139,19 +134,19 @@ async def analyze(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/capex_cwip_module/analyze")
-async def analyze(req: Request):
+async def analyze(req: AnalysisRequest):
     try:
         analyzer = CapexCwipModule()
-        req_data =  await req.json()
+        req_data = req.dict()
         result = analyzer.run(req_data)
         return result
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/liquidity/analyze")
-async def analyze_liquidity(req: Request):
+async def analyze_liquidity(req: AnalysisRequest):
     try:
-        req_data = await req.json()
+        req_data = req.dict()
         company = req_data["company"].upper()
 
         # Convert to liquidity models
