@@ -98,8 +98,8 @@ def compute_trend_output(financials: List) -> Dict[str, dict]:
     # Assuming 'financials' is a list of objects with attributes:
     # trade_receivables, inventory, trade_payables
     
-    receivables_values = [f.trade_receivables for f in financials]
-    inventory_values = [f.inventory for f in financials]
+    receivables_values = [f.Trade_receivables for f in financials]
+    inventory_values = [f.inventories for f in financials]
     payables_values = [f.trade_payables for f in financials]
     revenue_values = [f.revenue for f in financials]
 

@@ -54,11 +54,11 @@ def compute_per_year_metrics(financials_5y: List[YearFinancialInput]) -> Dict[in
 
     for f in sorted_fin:
         # Core WC Metrics
-        dso = calc_dso(f.trade_receivables, f.revenue)
-        dio = calc_dio(f.inventory, f.cogs)
+        dso = calc_dso(f.Trade_receivables, f.revenue)
+        dio = calc_dio(f.inventories, f.cogs)
         dpo = calc_dpo(f.trade_payables, f.cogs)
         ccc = calc_ccc(dso, dio, dpo)
-        nwc = calc_nwc(f.trade_receivables, f.inventory, f.trade_payables)
+        nwc = calc_nwc(f.Trade_receivables, f.inventories, f.trade_payables)
         nwc_ratio = calc_nwc_ratio(nwc, f.revenue)
         
         # Use integer year as key
@@ -67,8 +67,8 @@ def compute_per_year_metrics(financials_5y: List[YearFinancialInput]) -> Dict[in
         metrics[year_int] = {
             "year": year_int,
             "year_label": f.year,  # Keep original label
-            "trade_receivables": f.trade_receivables,
-            "inventory": f.inventory,
+            "trade_receivables": f.Trade_receivables,
+            "inventory": f.inventories,
             "trade_payables": f.trade_payables,
             "revenue": f.revenue,
             "cogs": f.cogs,

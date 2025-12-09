@@ -5,9 +5,9 @@ from pydantic import BaseModel, Field, root_validator
 
 class YearFinancialInput(BaseModel):
     year: int  # Changed to str to accept "Mar 2024" format
-    trade_receivables: float = 0.0
+    Trade_receivables: float = 0.0
     trade_payables: float = 0.0
-    inventory: float = 0.0
+    inventories: float = 0.0
     revenue: float = 0.0
     cogs: float = 0.0
     

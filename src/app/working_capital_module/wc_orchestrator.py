@@ -214,7 +214,10 @@ class WorkingCapitalModule:
 
 
 # ========= WRAPPER FUNCTION WITH DEBUG LOGS =========
-
+def parse_percent(val):
+    if isinstance(val, str):
+        val = val.strip().replace('%', '')
+    return float(val)
 
 def run_working_capital_module(payload: dict):
     print("\n\n******** WC MODULE INVOKED ********")
@@ -222,7 +225,20 @@ def run_working_capital_module(payload: dict):
 
     try:
         module = WorkingCapitalModule()
-        
+        # Preprocess financial_years to compute cogs before creating WorkingCapitalInput
+        for k in payload.get("financial_data", {}).get("financial_years", []):
+            # Ensure required keys exist and are numeric
+            try:
+                manufacturing_cost =parse_percent(k.get("manufacturing_cost", 0))
+                other_cost = parse_percent(k.get("other_cost", 0))
+                material_cost = parse_percent(k.get("material_cost", 0))
+                revenue = k.get("revenue", 0)
+                # Calculate cogs as per the formula
+                k["cogs"] = revenue * (manufacturing_cost + other_cost + material_cost) / 100
+                print(f"DEBUG: Financial year data - Year: {k.get('year')}")
+            except Exception as e:
+                print(f"ERROR processing financial year data: {e}")
+
         input_data = WorkingCapitalInput(**payload)
         print("DEBUG: Input data parsed successfully. Running module...")
 
