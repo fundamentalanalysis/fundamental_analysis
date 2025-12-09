@@ -28,6 +28,8 @@ from src.app.asset_quality_module.asset_models import (
     IndustryAssetBenchmarks,
 )
 from src.app.asset_quality_module.asset_orchestrator import AssetIntangibleQualityModule
+from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
+from src.app.capex_cwip_module.orchestrator import CapexCwipModule
 
 
 DEFAULT_BENCHMARKS = IndustryBenchmarks(
@@ -37,6 +39,16 @@ DEFAULT_BENCHMARKS = IndustryBenchmarks(
     min_safe_icr=2.0,
     high_floating_share=0.60,
     high_wacd=0.12,
+)
+
+
+# ---------------------------------------------------------
+# FASTAPI APP
+# ---------------------------------------------------------
+app = FastAPI(
+    title="Borrowings Analytical Engine",
+    version="1.0",
+    description="API for 1-year borrowings analysis"
 )
 
 DEFAULT_COVENANTS = CovenantLimits(
@@ -119,6 +131,17 @@ async def analyze(request: Request):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/capex_cwip_module/analyze")
+async def analyze(req: Request):
+    try:
+        analyzer = CapexCwipModule()
+        req_data =  await req.json()
+        result = analyzer.run(req_data)
+        return result
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 if __name__ == "__main__":
     import uvicorn
