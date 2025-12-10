@@ -34,6 +34,7 @@ def apply_rules(
 
     # A1 – Retained Earnings Growth
     retained_yoy = m.get("retained_yoy_pct")
+
     if retained_yoy is not None:
         if retained_yoy < cfg.retained_earnings_decline_warning:
             results.append(
@@ -120,6 +121,7 @@ def apply_rules(
 
     # B2 – ROE Declining Trend
     roe_declining = trends.get("roe_declining", False)
+
     if roe_declining:
         results.append(
             _make(
@@ -131,6 +133,19 @@ def apply_rules(
                 roe,
                 "3+ consecutive years decline",
                 "ROE showing declining trend; profitability and capital efficiency eroding.",
+            )
+        )
+    else:
+        results.append(
+            _make(
+                "B2",
+                "ROE Declining Trend",
+                "roe",
+                last_year,
+                "Green",
+                roe,
+                "Not Found 3+ consecutive years decline",
+                "ROE is not in declining trend.",
             )
         )
 

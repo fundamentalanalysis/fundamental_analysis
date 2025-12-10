@@ -76,21 +76,18 @@ def compute_trend_metrics(yearly: Dict[int, dict]) -> Dict[str, Any]:
     # print(first_year, last_year, num_years)
 
     retained_cagr = compute_cagr(yearly[first_year].get(
-        "retained_earnings"), yearly[last_year].get("retained_earnings"), num_years)
+        "retained_earnings"), yearly[last_year].get("retained_earnings"), num_years - 1)
     roe_cagr = compute_cagr(yearly[first_year].get(
-        "roe"), yearly[last_year].get("roe"), num_years)
+        "roe"), yearly[last_year].get("roe"), num_years - 1)
     payout_cagr = compute_cagr(yearly[first_year].get(
-        "payout_ratio") or 0, yearly[last_year].get("payout_ratio") or 0, num_years)
+        "payout_ratio") or 0, yearly[last_year].get("payout_ratio") or 0, num_years - 1)
     pat_cagr = compute_cagr(yearly[first_year].get(
-        "pat"), yearly[last_year].get("pat"), num_years)
+        "pat"), yearly[last_year].get("pat"), num_years - 1)
 
-    equity_first = yearly[first_year].get("share_capital")
-    equity_last = yearly[last_year].get("share_capital")
-    debt_first = yearly[first_year].get("debt")
-    debt_last = yearly[last_year].get("debt")
-
-    equity_cagr = compute_cagr(equity_first, equity_last, num_years)
-    debt_cagr = compute_cagr(debt_first, debt_last, num_years)
+    equity_cagr = compute_cagr(yearly[first_year].get(
+        "share_capital"), yearly[last_year].get("share_capital"), num_years - 1)
+    debt_cagr = compute_cagr(yearly[first_year].get(
+        "debt"), yearly[last_year].get("debt"), num_years - 1)
 
     # YoY arrays
     payout_yoy = []

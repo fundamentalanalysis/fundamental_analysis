@@ -17,7 +17,7 @@ def compute_per_year_metrics(financials_5y: List[YearFinancialInput]) -> Dict[in
     sorted_fin = sorted(financials_5y, key=lambda x: x.year)
 
     # print("Computing per-year metrics for years:", [f.year for f in sorted_fin])
-    # print("Financials:", sorted_fin)
+    print("Financials:", sorted_fin)
 
     prev = None
     for f in sorted_fin:
@@ -37,11 +37,11 @@ def compute_per_year_metrics(financials_5y: List[YearFinancialInput]) -> Dict[in
         # ROE calculation
         avg_equity = None
         if prev is not None:
-            prev_net = prev.share_capital
-            avg_equity = safe_div((share_capital + prev_net), 2)
-        else:
-            # for 2021 Avg Share Holders Equity was 31.5 Cr as per FY21 AR
-            avg_equity = 31.5
+            prev_net = prev.net_worth
+            avg_equity = safe_div((net_worth + prev_net), 2)
+        # else:
+        #     # for 2021 Avg Share Holders Equity was 31.5 Cr as per FY21 AR
+        #     avg_equity = 31.5
 
         roe = safe_div(f.pat, avg_equity)
 
