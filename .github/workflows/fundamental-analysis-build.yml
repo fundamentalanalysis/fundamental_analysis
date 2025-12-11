@@ -87,13 +87,13 @@ jobs:
         run: |
           docker build -t ${{ env.ECR_REPOSITORY }}:test -f Dockerfile.lambda .
           echo "Testing FastAPI app import..."
-          docker run --rm -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test python -c "from src.main import app; print('✅ App imported successfully')"
+          docker run --rm --entrypoint python -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test -c "from src.main import app; print('✅ App imported successfully')"
           echo "Testing Lambda handler import..."
-          docker run --rm -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test python -c "from lambda_handler import handler; print('✅ Lambda handler imported successfully')"
+          docker run --rm --entrypoint python -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test -c "from lambda_handler import handler; print('✅ Lambda handler imported successfully')"
 
       - name: Test all endpoints are registered
         run: |
-          docker run --rm -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test python -c "
+          docker run --rm --entrypoint python -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test -c "
           from src.main import app
           routes = [route.path for route in app.routes]
           expected = ['/borrowings/analyze', '/asset_quality/analyze', '/working_capital_module/analyze', '/capex_cwip_module/analyze', '/liquidity/analyze']
