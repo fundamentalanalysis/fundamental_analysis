@@ -16,12 +16,11 @@ env:
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REPOSITORY: lambda/fundamental-analysis
   LAMBDA_FUNCTION_NAME: fundamental-analysis-api
-  LAMBDA_ROLE_NAME: fundamental-analysis-lambda-role
+  LAMBDA_ROLE_ARN: arn:aws:iam::940482440870:role/fundamental-analysis-lambda-role
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only run if CI passed (for workflow_run trigger) or if it's a tag push
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' }}
     
     steps:
@@ -94,47 +93,12 @@ jobs:
           echo "Pushing images to ECR..."
           docker push $ECR_URI:$IMAGE_TAG
           docker push $ECR_URI:latest
-          
-          echo "image_uri=$ECR_URI:latest" >> $GITHUB_OUTPUT
-
-      - name: Create Lambda execution role if not exists
-        run: |
-          ROLE_ARN=$(aws iam get-role --role-name ${{ env.LAMBDA_ROLE_NAME }} --query 'Role.Arn' --output text 2>/dev/null) || true
-          
-          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" == "None" ]; then
-            echo "Creating Lambda execution role..."
-            
-            # Create the role
-            aws iam create-role \
-              --role-name ${{ env.LAMBDA_ROLE_NAME }} \
-              --assume-role-policy-document '{
-                "Version": "2012-10-17",
-                "Statement": [{
-                  "Effect": "Allow",
-                  "Principal": {"Service": "lambda.amazonaws.com"},
-                  "Action": "sts:AssumeRole"
-                }]
-              }'
-            
-            # Attach basic execution policy
-            aws iam attach-role-policy \
-              --role-name ${{ env.LAMBDA_ROLE_NAME }} \
-              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-            
-            echo "Waiting for role to propagate..."
-            sleep 10
-            
-            echo "Lambda execution role created successfully!"
-          else
-            echo "Lambda execution role already exists: $ROLE_ARN"
-          fi
 
       - name: Create or Update Lambda function
         env:
           ECR_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}
         run: |
           IMAGE_URI=$ECR_URI:latest
-          ROLE_ARN="arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.LAMBDA_ROLE_NAME }}"
           
           # Check if Lambda function exists
           if aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} 2>/dev/null; then
@@ -154,7 +118,7 @@ jobs:
               --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
               --package-type Image \
               --code ImageUri=$IMAGE_URI \
-              --role $ROLE_ARN \
+              --role ${{ env.LAMBDA_ROLE_ARN }} \
               --timeout 60 \
               --memory-size 512 \
               --environment "Variables={OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}}"
@@ -186,7 +150,7 @@ jobs:
           echo "Verifying Lambda function..."
           FUNCTION_INFO=$(aws lambda get-function \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --query 'Configuration.{State:State,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}' \
+            --query 'Configuration.{State:State,MemorySize:MemorySize,Timeout:Timeout}' \
             --output json)
           
           echo "Lambda Configuration:"
@@ -203,21 +167,14 @@ jobs:
       - name: Test Lambda function
         run: |
           echo "Testing Lambda function with health check..."
-          RESPONSE=$(aws lambda invoke \
+          aws lambda invoke \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
             --payload '{"resource":"/","path":"/","httpMethod":"GET","headers":{},"requestContext":{"resourcePath":"/","httpMethod":"GET"},"body":null,"isBase64Encoded":false}' \
             --cli-binary-format raw-in-base64-out \
-            /tmp/response.json 2>&1)
+            /tmp/response.json
           
           echo "Lambda Response:"
           cat /tmp/response.json
-          
-          # Check if response contains error
-          if grep -q "errorMessage" /tmp/response.json; then
-            echo "⚠️ Lambda returned an error (may be expected for root endpoint)"
-          else
-            echo "✅ Lambda function responded successfully!"
-          fi
 
       - name: Print deployment summary
         env:
