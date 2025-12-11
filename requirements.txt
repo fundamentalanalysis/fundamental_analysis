@@ -1,7 +1,6 @@
 requests
-pandas
-selenium
-beautifulsoup4
+pandas<2.0.0
+numpy>=1.24.0,<2.0.0
 python-dotenv
 lxml
 html2text
@@ -10,4 +9,5 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 openai>=1.16.0
 pydantic>=1.10.13,<2.0.0
-fastapi
+# AWS Lambda adapter
+mangum>=0.17.0

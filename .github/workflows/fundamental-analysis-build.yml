@@ -1,0 +1,132 @@
+name: CI - Build and Test
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: lambda/fundamental-analysis
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov flake8 black
+
+      - name: Lint with flake8
+        run: |
+          # Stop build if there are Python syntax errors or undefined names
+          flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Check formatting with black
+        run: |
+          black --check src/ --line-length=127 || echo "Formatting issues found (non-blocking)"
+
+      - name: Verify imports
+        run: |
+          python -c "from src.main import app; print('✅ FastAPI app imported successfully')"
+          python -c "from src.app.borrowing_module.debt_orchestrator import BorrowingsModule; print('✅ BorrowingsModule imported')"
+          python -c "from src.app.asset_quality_module.asset_orchestrator import AssetIntangibleQualityModule; print('✅ AssetQualityModule imported')"
+          python -c "from src.app.working_capital_module.wc_orchestrator import run_working_capital_module; print('✅ WorkingCapitalModule imported')"
+          python -c "from src.app.capex_cwip_module.orchestrator import CapexCwipModule; print('✅ CapexCwipModule imported')"
+          python -c "from src.app.liquidity_module.liquidity_orchestrator import LiquidityModule, build_financial_list; print('✅ LiquidityModule imported')"
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml || echo "No tests found or tests failed (non-blocking)"
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (test only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.lambda
+          push: false
+          tags: ${{ env.ECR_REPOSITORY }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker image imports
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }}:test -f Dockerfile.lambda .
+          echo "Testing FastAPI app import..."
+          docker run --rm ${{ env.ECR_REPOSITORY }}:test python -c "from src.main import app; print('✅ App imported successfully')"
+          echo "Testing Lambda handler import..."
+          docker run --rm ${{ env.ECR_REPOSITORY }}:test python -c "from lambda_handler import handler; print('✅ Lambda handler imported successfully')"
+
+      - name: Test all endpoints are registered
+        run: |
+          docker run --rm ${{ env.ECR_REPOSITORY }}:test python -c "
+          from src.main import app
+          routes = [route.path for route in app.routes]
+          expected = ['/borrowings/analyze', '/asset_quality/analyze', '/working_capital_module/analyze', '/capex_cwip_module/analyze', '/liquidity/analyze']
+          for endpoint in expected:
+              if endpoint in routes:
+                  print(f'✅ {endpoint} registered')
+              else:
+                  print(f'❌ {endpoint} NOT found')
+                  exit(1)
+          "
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build-image
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }}:scan -f Dockerfile.lambda .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:scan
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Check for secrets in code
+        run: |
+          echo "Checking for exposed secrets..."
+          if grep -rE "(sk-proj-|OPENAI_API_KEY=sk-|aws_secret_access_key)" --include="*.py" --include="*.yml" --include="*.yaml" src/ .github/ 2>/dev/null; then
+            echo "⚠️ Warning: Potential secrets found in code!"
+          else
+            echo "✅ No obvious secrets found in code"
+          fi

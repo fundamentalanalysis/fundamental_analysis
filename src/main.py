@@ -162,7 +162,7 @@ async def analyze_liquidity(req: AnalysisRequest):
         module = LiquidityModule()
 
         result = module.run(module_input)
-        return result.model_dump()
+        return result
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

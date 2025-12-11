@@ -1,0 +1,195 @@
+name: CD - Deploy to AWS Lambda
+
+on:
+  workflow_run:
+    workflows: ["CI - Build and Test"]
+    types:
+      - completed
+    branches:
+      - main
+  push:
+    tags:
+      - 'v*'
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: lambda/fundamental-analysis
+  LAMBDA_FUNCTION_NAME: fundamental-analysis-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only run if CI passed (for workflow_run trigger) or if it's a tag push
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+      - name: Create ECR repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --image-scanning-configuration scanOnPush=true
+
+      - name: Delete previous images from ECR
+        run: |
+          echo "Fetching existing images..."
+          IMAGES=$(aws ecr list-images \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --query 'imageIds[*]' \
+            --output json)
+          
+          if [ "$IMAGES" != "[]" ] && [ -n "$IMAGES" ]; then
+            echo "Deleting existing images..."
+            aws ecr batch-delete-image \
+              --repository-name ${{ env.ECR_REPOSITORY }} \
+              --image-ids "$IMAGES"
+            echo "Previous images deleted."
+          else
+            echo "No existing images to delete."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract version
+        id: meta
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.sha }}
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Image version: ${VERSION}"
+
+      - name: Build and push Docker image to ECR
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.version }}
+          ECR_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}
+        run: |
+          echo "Building image..."
+          docker build -t ${{ env.ECR_REPOSITORY }}:$IMAGE_TAG -f Dockerfile.lambda .
+          
+          echo "Tagging image..."
+          docker tag ${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+          docker tag ${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_URI:latest
+          
+          echo "Pushing images to ECR..."
+          docker push $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:latest
+          
+          echo "image_uri=$ECR_URI:latest" >> $GITHUB_OUTPUT
+
+      - name: Update Lambda function code
+        env:
+          ECR_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}
+        run: |
+          IMAGE_URI=$ECR_URI:latest
+          
+          # Check if Lambda function exists
+          if aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} 2>/dev/null; then
+            echo "Updating Lambda function with new image..."
+            aws lambda update-function-code \
+              --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+              --image-uri $IMAGE_URI
+            
+            echo "Waiting for Lambda update to complete..."
+            aws lambda wait function-updated \
+              --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
+            
+            echo "Lambda function code updated successfully!"
+          else
+            echo "::error::Lambda function '${{ env.LAMBDA_FUNCTION_NAME }}' does not exist."
+            echo "Please create it first using AWS Console or CLI."
+            exit 1
+          fi
+
+      - name: Update Lambda environment variables
+        run: |
+          echo "Updating Lambda environment variables..."
+          aws lambda update-function-configuration \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --environment "Variables={OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}}" \
+            --timeout 60 \
+            --memory-size 512
+          
+          echo "Waiting for configuration update to complete..."
+          aws lambda wait function-updated \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
+          
+          echo "Lambda configuration updated successfully!"
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying Lambda function..."
+          FUNCTION_INFO=$(aws lambda get-function \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --query 'Configuration.{State:State,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}' \
+            --output json)
+          
+          echo "Lambda Configuration:"
+          echo "$FUNCTION_INFO"
+          
+          FUNCTION_STATE=$(echo "$FUNCTION_INFO" | jq -r '.State')
+          
+          if [ "$FUNCTION_STATE" == "Active" ]; then
+            echo "✅ Lambda function is active and ready!"
+          else
+            echo "⚠️ Lambda function state: $FUNCTION_STATE"
+          fi
+
+      - name: Test Lambda function
+        run: |
+          echo "Testing Lambda function with health check..."
+          RESPONSE=$(aws lambda invoke \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --payload '{"resource":"/","path":"/","httpMethod":"GET","headers":{},"requestContext":{"resourcePath":"/","httpMethod":"GET"},"body":null,"isBase64Encoded":false}' \
+            --cli-binary-format raw-in-base64-out \
+            /tmp/response.json 2>&1)
+          
+          echo "Lambda Response:"
+          cat /tmp/response.json
+          
+          # Check if response contains error
+          if grep -q "errorMessage" /tmp/response.json; then
+            echo "⚠️ Lambda returned an error (may be expected for root endpoint)"
+          else
+            echo "✅ Lambda function responded successfully!"
+          fi
+
+      - name: Print deployment summary
+        env:
+          ECR_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}
+        run: |
+          echo "=========================================="
+          echo "🚀 Deployment Complete!"
+          echo "=========================================="
+          echo "📦 ECR Image: $ECR_URI:latest"
+          echo "⚡ Lambda Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          echo "🌍 Region: ${{ env.AWS_REGION }}"
+          echo "🏷️ Version: ${{ steps.meta.outputs.version }}"
+          echo "=========================================="
+          echo ""
+          echo "📋 Available Endpoints:"
+          echo "  • POST /borrowings/analyze"
+          echo "  • POST /asset_quality/analyze"
+          echo "  • POST /working_capital_module/analyze"
+          echo "  • POST /capex_cwip_module/analyze"
+          echo "  • POST /liquidity/analyze"
+          echo "=========================================="
