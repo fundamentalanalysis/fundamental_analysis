@@ -1,21 +1,19 @@
-# src/app/borrowing_module/debt_models.py
-
-from typing import List, Optional
-from pydantic import BaseModel
-
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, root_validator
 
 
 class YearFinancialInput(BaseModel):
     year: int
-    short_term_debt: float = 0
-    long_term_debt: float = 0
-    total_equity: float = 0
-    ebitda: float = 0
-    ebit: float = 0
-    finance_cost: float = 0
-    capex: float = 0
-    cwip: float = 0
-    revenue: float = 0
+    short_term_debt: float = 0.0
+    long_term_debt: float = 0.0
+    total_equity: float = 0.0
+    ebitda: float = 0.0
+    ebit: float = 0.0
+    finance_cost: float = 0.0
+    capex: float = 0.0
+    cwip: float = 0.0
+    revenue: float = 0.0
+    operating_cash_flow: float = 0.0
 
     total_debt_maturing_lt_1y: Optional[float] = None
     total_debt_maturing_1_3y: Optional[float] = None
@@ -26,12 +24,13 @@ class YearFinancialInput(BaseModel):
     fixed_rate_debt: Optional[float] = None
 
 
-
 class IndustryBenchmarks(BaseModel):
     target_de_ratio: float
     max_safe_de_ratio: float
     max_safe_debt_ebitda: float
     min_safe_icr: float
+    high_floating_share: Optional[float] = 0.6
+    high_wacd: Optional[float] = 0.12
 
 
 class CovenantLimits(BaseModel):
@@ -46,23 +45,35 @@ class BorrowingsInput(BaseModel):
     financials_5y: List[YearFinancialInput]
     industry_benchmarks: IndustryBenchmarks
     covenant_limits: CovenantLimits
-    # midd: Optional[dict] = None
+
+    @root_validator(skip_on_failure=True)
+    def validate_financials(cls, values):
+        financials = values.get("financials_5y") or []
+        if len(financials) != 5:
+            raise ValueError("Borrowings module requires exactly 5 years of financial data")
+        years = sorted([f.year for f in financials])
+        if years != sorted(set(years)):
+            raise ValueError("Duplicate year detected in financials_5y")
+        return values
 
 
 class RuleResult(BaseModel):
     rule_id: str
     rule_name: str
+    metric: Optional[str]
+    year: Optional[int]
     flag: str
-    value: float
+    value: Optional[float]
     threshold: str
     reason: str
 
 
 class BorrowingsOutput(BaseModel):
-    module: str
-    sub_score_adjusted: int
+    module: str = Field(default="Borrowings")
+    company: str
+    key_metrics: Dict[str, Any]
+    trends: Dict[str, Any]
     analysis_narrative: List[str]
-    red_flags: List[dict]
+    red_flags: List[Dict[str, Any]]
     positive_points: List[str]
-    rule_results: List[RuleResult]
-    metrics: dict
+    rules: List[RuleResult]

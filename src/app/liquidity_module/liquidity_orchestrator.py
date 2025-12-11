@@ -177,7 +177,7 @@ class LiquidityModule:
             "ocf_to_total_debt": m.get("ocf_to_total_debt"),
             "interest_coverage_ocf": m.get("interest_coverage_ocf"),
             "cash_coverage_st_debt": m.get("cash_coverage_st_debt"),
-            "current_ratio_yoy_latest": trends["yoy"]['current_ratio_yoy'][-1],
+            "current_ratio_yoy_latest": trends["yoy"]["current_ratio"][-1],
             "cash_yoy_latest": trends["yoy"]['cash_yoy'][-1],
             "ocf_yoy_latest": trends["yoy"]['ocf_yoy'][-1],
         }

@@ -143,7 +143,7 @@ def compute_liquidity_trends(financials: List[YearFinancials]) -> Dict[str, dict
         "years": years,
 
         "yoy": {
-            "current_ratio_yoy": current_ratio_yoy,
+            "current_ratio": current_ratio_yoy,
             "cash_yoy": cash_yoy,
             "receivables_yoy": recv_yoy,
             "inventory_yoy": inv_yoy,
