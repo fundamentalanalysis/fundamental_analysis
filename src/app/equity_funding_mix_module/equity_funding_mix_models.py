@@ -25,8 +25,8 @@ class IndustryBenchmarks(BaseModel):
 
 
 class EquityFundingInput(BaseModel):
-    company_id: str
-    industry_code: str
+    company: str
+    industry_code: Optional[str] = "GENERAL"
     financials_5y: List[YearFinancialInput]
     industry_equity_benchmarks: IndustryBenchmarks
 

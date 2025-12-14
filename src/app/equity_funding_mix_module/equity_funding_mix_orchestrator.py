@@ -4,7 +4,7 @@ from typing import Tuple, List, Dict
 from .equity_funding_mix_config import load_rule_config, EquityFundingRuleConfig
 from .equity_funding_mix_llm import generate_llm_narrative
 from .equity_funding_mix_metrics import compute_per_year_metrics
-from .equity_funding_mix_models import EquityFundingInput, EquityFundingOutput, RuleResult
+from .equity_funding_mix_models import EquityFundingInput, EquityFundingOutput, RuleResult, YearFinancialInput
 from .equity_funding_mix_rules import apply_rules
 from .equity_funding_mix_trend import compute_trend_metrics
 from .equity_funding_mix_insight_fallback import generate_fallback_insight
@@ -36,7 +36,7 @@ class EquityFundingMixModule:
         base_score = self._compute_score(rule_results)
         summary_color = self._score_to_color(base_score)
         print(
-            f"Equity Funding Mix Module - Company: {efi.company_id}, Score: {base_score}, Summary Color: {summary_color}")
+            f"Equity Funding Mix Module - Company: {efi.company}, Score: {base_score}, Summary Color: {summary_color}")
 
         red_flags, positives = self._summarize(rule_results)
         key_metrics = self._extract_key_metrics(
@@ -47,7 +47,7 @@ class EquityFundingMixModule:
 
         # Generate narrative and insights
         narrative, adjusted_score, trend_insights = generate_llm_narrative(
-            company_id=efi.company_id,
+            company_id=efi.company,
             key_metrics=key_metrics,
             rule_results=rule_results,
             deterministic_notes=deterministic_notes,
@@ -70,7 +70,7 @@ class EquityFundingMixModule:
 
         return EquityFundingOutput(
             module="EquityFundingMix",
-            company=efi.company_id,
+            company=efi.company,
             key_metrics=key_metrics,
             trends=trend_summary,
             analysis_narrative=narrative,
@@ -209,3 +209,75 @@ class EquityFundingMixModule:
                 "insight": None,  # Will be populated by LLM
             }
         return trend_summary
+from .equity_funding_mix_models import EquityFundingInput as EquityYearFinancialInput, EquityFundingOutput, IndustryBenchmarks as EquityIndustryBenchmarks
+
+equity_funding_engine = EquityFundingMixModule()
+
+# Equity Funding Mix Benchmarks
+DEFAULT_EQUITY_BENCHMARKS = EquityIndustryBenchmarks(
+    payout_normal=0.30,
+    payout_high=0.50,
+    roe_good=0.15,
+    roe_modest=0.10,
+    dilution_warning=0.05,
+)
+def run_equity_funding_mix_module(efi: dict) -> EquityFundingOutput:
+        # Convert request data, computing missing equity fields if needed
+        equity_years = []
+        
+        for fy in efi["financial_data"]["financial_years"]:
+            fy_dict = fy
+
+            # 1. Compute total debt: short_term + long_term + lease_liabilities
+            if fy_dict.get("debt") is None:
+                st_debt = fy_dict.get("short_term_debt") or 0.0
+                lt_debt = fy_dict.get("long_term_debt") or 0.0
+                lease_liab = fy_dict.get("lease_liabilities") or 0.0
+                fy_dict["debt"] = st_debt + lt_debt + lease_liab
+
+            # 2. Compute share_capital (use from input if available, otherwise use total_equity)
+            if fy_dict.get("share_capital") is None:
+                fy_dict["share_capital"] = fy_dict.get("total_equity") or 0.0
+
+            # 3. Compute reserves_and_surplus (use from input if available, otherwise default to 0)
+            if fy_dict.get("reserves_and_surplus") is None:
+                fy_dict["reserves_and_surplus"] = fy_dict.get(
+                    "reserves") or 0.0
+
+            # 4. Compute net_worth = share_capital + reserves_and_surplus
+            if fy_dict.get("net_worth") is None:
+                fy_dict["net_worth"] = (fy_dict.get(
+                    "share_capital") or 0.0) + (fy_dict.get("reserves_and_surplus") or 0.0)
+
+            # 5. Compute PAT from operating profit or profit_from_operations
+            fy_dict["pat"] = fy_dict.get("net_profit")
+
+            # if fy_dict.get("pat") is None:
+            #     pat_val = fy_dict.get("net_profit") or 0.0
+            #     print("Initial PAT from operations:", pat_val)
+            #     fy_dict["pat"] = max(0, pat_val)
+
+            # 6. Set dividend_paid (default 0 if not provided)
+            if fy_dict.get("dividends_paid") is None:
+                fy_dict["dividends_paid"] = 0.0
+
+            # fy_dict["dividends_paid"] = fy_dict.get("dividends_paid")
+            # print("Year:", fy_dict["year"], "PAT:", fy_dict["pat"], "Dividends Paid:", fy_dict["dividends_paid"])
+
+            # 7. Compute free_cash_flow if not provided
+            if fy_dict.get("free_cash_flow") is None:
+                ocf = fy_dict.get("cash_from_operating_activity") or 0.0
+                capex = fy_dict.get("fixed_assets_purchased") or 0.0
+                fy_dict["free_cash_flow"] = ocf + \
+                    capex  # capex is negative (outflow)
+
+            equity_years.append(YearFinancialInput(**fy_dict))
+
+        module_input = EquityFundingInput(
+            company=efi["company"].upper(),
+            industry_code=(efi.get("industry_code") or "GENERAL").upper(),
+            financials_5y=equity_years,
+            industry_equity_benchmarks=DEFAULT_EQUITY_BENCHMARKS,
+        )
+        result = equity_funding_engine.run(module_input)
+        return result
