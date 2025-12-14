@@ -52,12 +52,6 @@ from src.app.borrowing_module.debt_models import (
 )
 from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
 
-# from src.app.asset_quality_module.asset_models import (
-#     AssetQualityInput,
-#     AssetFinancialYearInput,
-#     IndustryAssetBenchmarks,
-# )
-
 
 from src.app.asset_intangible_quality_module.aiqm_orchestrator import AssetIntangibleQualityModule
 from src.app.asset_intangible_quality_module.aiqm_models import (
