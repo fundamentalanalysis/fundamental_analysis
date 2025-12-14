@@ -41,7 +41,9 @@ class FinancialYearData(BaseModel):
     direct_taxes: float
     interest_paid_fin: float
     cash_from_operating_activity: float
-
+    intangible_assets: float
+    net_profit: float
+    borrowings: float
 
 class FinancialData(BaseModel):
     financial_years: List[FinancialYearData]

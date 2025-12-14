@@ -1,8 +1,11 @@
+from typing import Optional
+
 # ============================================================
 # metrics_engine.py  (Final Production-Ready Version)
 # ============================================================
 
-def compute_year_metrics(current: dict, prev: dict | None) -> dict:
+# def compute_year_metrics(current: dict, prev: dict | None) -> dict:
+def compute_year_metrics(current: dict, prev: Optional[dict]) -> dict:
     """
     Compute all per-year metrics for Capex/CWIP module.
     Automatically derives missing fields like:
