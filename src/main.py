@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List, Optional
 
+from src.app.quality_of_earnings_module.qoe_models import QoEBenchmarks, QoEYearInput, QualityOfEarningsInput
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -31,6 +32,7 @@ from src.app.asset_quality_module.asset_models import (
 from src.app.asset_quality_module.asset_orchestrator import AssetIntangibleQualityModule
 from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
 from src.app.capex_cwip_module.orchestrator import CapexCwipModule
+from src.app.quality_of_earnings_module.qoe_orchestrator import run_quality_of_earnings_module
 
 
 DEFAULT_BENCHMARKS = IndustryBenchmarks(
@@ -132,6 +134,29 @@ async def analyze(request: AnalysisRequest):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+    
+@app.post("/quality_of_earnings/analyze")
+async def analyze_qoe(req: AnalysisRequest):
+    try:
+        data = req.dict()
+
+        # convert to QoE expected format
+        financial_years = data["financial_data"]["financial_years"]
+
+        qoe_input = {
+            "company": data["company"],
+            "financials_5y": financial_years
+        }
+
+        
+
+        result = run_quality_of_earnings_module(qoe_input)
+        return result
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
 @app.post("/capex_cwip_module/analyze")
 async def analyze(req: AnalysisRequest):

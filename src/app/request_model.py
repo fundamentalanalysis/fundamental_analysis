@@ -29,8 +29,11 @@ class FinancialYearData(BaseModel):
     depreciation: float
     material_cost: str  # Percentage as string e.g. "32.97%"
     manufacturing_cost: str
+    net_profit: float
     employee_cost: str
     other_cost: str
+    other_income: float
+    total_assets: float
     expenses: float
     fixed_assets_purchased: float
     profit_from_operations: float
