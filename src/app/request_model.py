@@ -12,7 +12,7 @@ class FinancialYearData(BaseModel):
     lease_liabilities: float
     other_borrowings: float
     trade_payables: float
-    Trade_receivables: float  # Keeping original casing from JSON
+    trade_receivables: float  # Keeping original casing from JSON
     advance_from_customers: float
     other_liability_items: float
     inventories: float

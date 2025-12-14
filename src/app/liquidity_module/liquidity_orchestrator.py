@@ -250,12 +250,12 @@ def build_financial_list(req) -> List[LiquidityYearFinancials]:
         total_debt = fy["short_term_debt"] + fy["long_term_debt"] + fy["lease_liabilities"] + fy["other_borrowings"] + fy["preference_capital"]
         #print(f"Processing Year: {fy['year']} : {fy['short_term_debt']} + {fy['other_liability_items']} + {fy['long_term_debt']} + {fy['lease_liabilities']} + {fy['other_borrowings']} + {fy['preference_capital']}")
         #print("Total Debt Calculated:", total_debt)
-        current_assets = fy["investments"] + fy["inventories"] + fy["Trade_receivables"]
+        current_assets = fy["investments"] + fy["inventories"] + fy["trade_receivables"]
         current_liablities = fy["short_term_debt"] + fy["other_liability_items"]
         operating_cash_flow = fy["profit_from_operations"] + fy["working_capital_changes"] - fy["direct_taxes"]
         daily_expenses = (fy["expenses"] - fy["depreciation"]) / 365
         marketable_securities = fy["investments"]
-        receivables = fy["Trade_receivables"]
+        receivables = fy["trade_receivables"]
         fin_list.append(
             LiquidityYearFinancials(
                 **{**fy, "inventory": inventory, "cash_and_equivalents": cash_equivalents,
