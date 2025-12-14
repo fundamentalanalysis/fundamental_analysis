@@ -96,7 +96,7 @@ jobs:
           docker run --rm --entrypoint python -e OPENAI_API_KEY=sk-test-dummy-key ${{ env.ECR_REPOSITORY }}:test -c "
           from src.main import app
           routes = [route.path for route in app.routes]
-          expected = ['/borrowings/analyze', '/working_capital_module/analyze', '/capex_cwip_module/analyze', '/liquidity/analyze' ,'/equity_funding_mix/analyze', '/asset_intangible_quality/analyze', '/risk/analyze']
+          expected = ['/borrowings/analyze', '/working_capital_module/analyze', '/capex_cwip_module/analyze', '/liquidity/analyze' ,'/equityfundingmix/analyze', '/asset_intangible_quality/analyze', '/risk/analyze','/quality_of_earnings/analyze']
           for endpoint in expected:
               if endpoint in routes:
                   print(f'✅ {endpoint} registered')
