@@ -18,6 +18,10 @@ def compute_derived_metrics(year: Dict[str, Any]) -> Dict[str, Any]:
     # loan rollover: proceeds - repayment (if both exist)
     proceeds = safe_float(year.get("proceeds_from_borrowings"))
     repayment = safe_float(year.get("repayment_of_borrowings"))
+
+    if repayment is not None and proceeds is not None:
+        out["principal_repayment"] = repayment
+
     if proceeds is not None and repayment is not None:
         out["loan_rollover_amount"] = proceeds - repayment
 
