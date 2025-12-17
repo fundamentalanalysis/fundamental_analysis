@@ -1,227 +1,293 @@
-# risk_trend.py (SAFE VERSION)
-from typing import List, Optional
+# def compute_trends(metrics: dict):
+#     years = sorted(metrics.keys())
 
+#     def values(key):
+#         return {f"Y-{len(years)-1-i}" if i < len(years)-1 else "Y": metrics[y][key]
+#                 for i, y in enumerate(years)}
 
-def _safe_is_number(x) -> bool:
-    return x is not None
+#     # -----------------------------
+#     # Zombie Company Metrics
+#     # -----------------------------
+#     ebit_vs_interest = {}
+#     cfo_vs_interest = {}
 
+#     ebit_below = 0
+#     cfo_below = 0
 
-def safe_lt(a: Optional[float], b: Optional[float]) -> bool:
-    """Return True if a < b and both numbers are present, else False."""
-    if a is None or b is None:
-        return False
-    return a < b
+#     for y in years:
+#         ebit = metrics[y]["ebit"]
+#         interest = metrics[y]["interest"]
+#         cfo = metrics[y]["cfo"]
 
+#         e_ratio = ebit / interest if interest else None
+#         c_ratio = cfo / interest if interest else None
 
-def safe_gt(a: Optional[float], b: Optional[float]) -> bool:
-    """Return True if a > b and both numbers are present, else False."""
-    if a is None or b is None:
-        return False
-    return a > b
+#         ebit_vs_interest[y] = e_ratio
+#         cfo_vs_interest[y] = c_ratio
 
+#         if e_ratio is not None and e_ratio < 1:
+#             ebit_below += 1
+#         if c_ratio is not None and c_ratio < 1:
+#             cfo_below += 1
 
-def safe_div(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
-    """Return numerator/denominator or None on invalid input (None/0)."""
-    if numerator is None or denominator in (None, 0):
-        return None
-    try:
-        return numerator / denominator
-    except Exception:
-        return None
+#     # Net debt trend
+#     net_debt_values = [metrics[y]["net_debt"] for y in years]
+#     net_debt_rising = all(net_debt_values[i] >= net_debt_values[i-1]
+#                           for i in range(1, len(net_debt_values)))
 
+#     profit_values = [metrics[y]["net_profit"] for y in years]
+#     profit_falling = profit_values[-1] < profit_values[-2]
 
-class RiskTrendAnalyzer:
-    @staticmethod
-    def yoy(series: List[Optional[float]]) -> List[Optional[float]]:
-        """
-        Year-over-year growth as fraction (not percent).
-        Returns list of length len(series)-1 where each element is (curr - prev)/abs(prev)
-        or None if prev or curr invalid.
-        """
-        out: List[Optional[float]] = []
-        for i in range(1, len(series)):
-            prev = series[i - 1]
-            curr = series[i]
-            # require both prev and curr to be valid numbers and prev != 0
-            if prev in (None, 0) or curr is None:
-                out.append(None)
-            else:
-                try:
-                    out.append((curr - prev) / abs(prev))
-                except Exception:
-                    out.append(None)
-        return out
+#     # -----------------------------
+#     # Window Dressing
+#     # -----------------------------
+#     cash_spike = None
+#     profit_spike = None
 
-    @staticmethod
-    def cagr(start: Optional[float], end: Optional[float], periods: int) -> float:
-        if start in (None, 0) or end is None or periods <= 0:
-            return 0.0
-        try:
-            return (end / start) ** (1.0 / periods) - 1.0
-        except Exception:
-            return 0.0
+#     if metrics[years[-2]]["cash"]:
+#         cash_spike = (
+#             metrics[years[-1]]["cash"] - metrics[years[-2]]["cash"]
+#         ) / metrics[years[-2]]["cash"]
 
-    @staticmethod
-    def consecutive_true(seq: List[bool]) -> int:
-        cur = 0
-        best = 0
-        for v in seq:
-            if v:
-                cur += 1
-            else:
-                cur = 0
-            if cur > best:
-                best = cur
-        return best
+#     if metrics[years[-2]]["net_profit"]:
+#         profit_spike = (
+#             metrics[years[-1]]["net_profit"] - metrics[years[-2]]["net_profit"]
+#         ) / metrics[years[-2]]["net_profit"]
 
-    # scenario helpers
-    def zombie_signals(self, ebit: List[Optional[float]], interest: List[Optional[float]], ocf: List[Optional[float]]):
-        # each element True if both numbers present and ebit < interest
-        ebit_lt_int = [(_safe_is_number(a) and _safe_is_number(b) and a < b) for a, b in zip(ebit, interest)]
-        ocf_lt_int = [(_safe_is_number(a) and _safe_is_number(b) and a < b) for a, b in zip(ocf, interest)]
+#     one_off_ratio = (
+#         abs(metrics[years[-1]]["other_income"]) / metrics[years[-1]]["net_profit"]
+#         if metrics[years[-1]]["net_profit"] else None
+#     )
+
+#     # -----------------------------
+#     # Asset Stripping (WITH OVERLAP YEARS)
+#     # -----------------------------
+#     debt_rising_years = []
+#     assets_falling_years = []
+#     overlap_years = []
+
+#     for i in range(1, len(years)):
+#         prev, curr = years[i-1], years[i]
+
+#         if metrics[curr]["net_debt"] > metrics[prev]["net_debt"]:
+#             debt_rising_years.append(curr)
+
+#         if metrics[curr]["fixed_assets"] < metrics[prev]["fixed_assets"]:
+#             assets_falling_years.append(curr)
+
+#         if (
+#             metrics[curr]["net_debt"] > metrics[prev]["net_debt"]
+#             and metrics[curr]["fixed_assets"] < metrics[prev]["fixed_assets"]
+#         ):
+#             overlap_years.append(curr)
+
+#     # -----------------------------
+#     # Loan Evergreening
+#     # -----------------------------
+#     total_proceeds = metrics[years[-1]]["proceeds"]
+#     total_repayment = metrics[years[-1]]["repayment"]
+#     total_debt = metrics[years[-1]]["borrowings"]
+
+#     rollover_ratio = (
+#         total_proceeds / total_debt if total_debt else None
+#     )
+
+#     principal_ratio = (
+#         total_repayment / total_debt if total_debt else None
+#     )
+
+#     # -----------------------------
+#     # Circular Trading
+#     # -----------------------------
+#     sales_up_cash_down = (
+#         metrics[years[-1]]["revenue"] > metrics[years[-2]]["revenue"]
+#         and metrics[years[-1]]["cfo"] < metrics[years[-2]]["cfo"]
+#     )
+
+#     return {
+#         "zombie_company": {
+#             "ebit_vs_interest": {
+#                 "values": ebit_vs_interest,
+#                 "years_below_1": ebit_below,
+#             },
+#             "cfo_vs_interest": {
+#                 "values": cfo_vs_interest,
+#                 "years_below_1": cfo_below,
+#             },
+#             "net_debt": {
+#                 "values": values("net_debt"),
+#                 "rising": net_debt_rising,
+#             },
+#             "profit": {
+#                 "values": values("net_profit"),
+#                 "falling": profit_falling,
+#             },
+#         },
+
+#         "window_dressing": {
+#             "cash_spike_yoy": cash_spike,
+#             "profit_spike_yoy": profit_spike,
+#             "one_off_income_ratio": one_off_ratio,
+#         },
+
+#         "asset_stripping": {
+#             "fixed_assets": {
+#                 "values": values("fixed_assets"),
+#                 "decline_years": len(assets_falling_years),
+#             },
+#             "debt_vs_assets": {
+#                 "net_debt": values("net_debt"),
+#                 "fixed_assets": values("fixed_assets"),
+#                 "comparison": {
+#                     "debt_rising_years": debt_rising_years,
+#                     "assets_falling_years": assets_falling_years,
+#                     "overlap_years": overlap_years,
+#                     "overlap_count": len(overlap_years),
+#                     "rule_triggered": len(overlap_years) >= 2,
+#                     "interpretation": (
+#                         "Debt increased while assets declined across multiple years."
+#                         if len(overlap_years) >= 2
+#                         else
+#                         "Debt increased, but asset decline was not persistent enough."
+#                     ),
+#                 },
+#             },
+#         },
+
+#         "loan_evergreening": {
+#             "loan_rollover_ratio": rollover_ratio,
+#             "principal_repayment_ratio": principal_ratio,
+#         },
+
+#         "circular_trading": {
+#             "receivables": values("receivables"),
+#             "revenue": values("revenue"),
+#             "sales_up_cash_down": sales_up_cash_down,
+#         },
+#     }
+
+# risk_trend.py
+
+def compute_trends(metrics: dict):
+    years = sorted(metrics.keys())
+
+    def year_map(key):
         return {
-            "ebit_interest_consec": self.consecutive_true(ebit_lt_int),
-            "ocf_interest_consec": self.consecutive_true(ocf_lt_int)
+            "Y": metrics[years[-1]][key],
+            "Y-1": metrics[years[-2]][key],
+            "Y-2": metrics[years[-3]][key],
+            "Y-3": metrics[years[-4]][key],
+            "Y-4": metrics[years[-5]][key],
         }
 
-    def window_signals(self, cash: List[Optional[float]], net_income: List[Optional[float]],
-                       revenue: List[Optional[float]], one_off: List[Optional[float]]):
-        # oneoff_ratio: elementwise abs(one_off) / abs(net_income) when both present and net_income != 0
-        oneoff_ratio = []
-        for n, o in zip(net_income, one_off):
-            if n in (None, 0) or o is None:
-                oneoff_ratio.append(None)
-            else:
-                try:
-                    oneoff_ratio.append(abs(o) / abs(n))
-                except Exception:
-                    oneoff_ratio.append(None)
+    # =========================
+    # 3.1 ZOMBIE COMPANY
+    # =========================
+    ebit_below = []
+    cfo_below = []
+    debt_profit_overlap = []
 
-        return {
-            "cash_yoy": self.yoy(cash),
-            "net_income_yoy": self.yoy(net_income),
-            "revenue_yoy": self.yoy(revenue),
-            "oneoff_ratio": oneoff_ratio
+    for i in range(1, len(years)):
+        y, p = years[i], years[i - 1]
+
+        if metrics[y]["ebit"] < metrics[y]["interest"]:
+            ebit_below.append(y)
+
+        if metrics[y]["cfo"] < metrics[y]["interest"]:
+            cfo_below.append(y)
+
+        if (
+            metrics[y]["net_debt"] > metrics[p]["net_debt"]
+            and metrics[y]["net_profit"] < metrics[p]["net_profit"]
+        ):
+            debt_profit_overlap.append(y)
+
+    zombie_company = {
+        "ebit_vs_interest": {
+            "values": {
+                "ebit": year_map("ebit"),
+                "interest": year_map("interest"),
+            },
+            "comparison": {
+                "years_below": ebit_below,
+                "count": len(ebit_below),
+                "rule_triggered": len(ebit_below) >= 2,
+                "interpretation": (
+                    "EBIT failed to cover interest for multiple years."
+                    if len(ebit_below) >= 2
+                    else "EBIT consistently exceeded interest expense."
+                ),
+            },
+        },
+
+        "cfo_vs_interest": {
+            "values": {
+                "cfo": year_map("cfo"),
+                "interest": year_map("interest"),
+            },
+            "comparison": {
+                "years_below": cfo_below,
+                "count": len(cfo_below),
+                "rule_triggered": len(cfo_below) >= 2,
+                "interpretation": (
+                    "Operating cash flows failed to cover interest in multiple years."
+                    if len(cfo_below) >= 2
+                    else "Cash flows generally covered interest."
+                ),
+            },
+        },
+
+        "debt_vs_profit": {
+            "values": {
+                "net_debt": year_map("net_debt"),
+                "net_profit": year_map("net_profit"),
+            },
+            "comparison": {
+                "overlap_years": debt_profit_overlap,
+                "overlap_count": len(debt_profit_overlap),
+                "rule_triggered": len(debt_profit_overlap) >= 2,
+                "interpretation": (
+                    "Debt increased while profits weakened across multiple years."
+                    if len(debt_profit_overlap) >= 2
+                    else "No sustained debt spiral."
+                ),
+            },
+        },
+    }
+
+    # =========================
+    # 3.4 LOAN EVERGREENING
+    # =========================
+    debt_ebitda_overlap = []
+
+    for i in range(1, len(years)):
+        y, p = years[i], years[i - 1]
+        if (
+            metrics[y]["net_debt"] > metrics[p]["net_debt"]
+            and metrics[y]["ebitda"] <= metrics[p]["ebitda"]
+        ):
+            debt_ebitda_overlap.append(y)
+
+    loan_evergreening = {
+        "debt_vs_ebitda": {
+            "values": {
+                "net_debt": year_map("net_debt"),
+                "ebitda": year_map("ebitda"),  # ✅ NOW FIXED
+            },
+            "comparison": {
+                "overlap_years": debt_ebitda_overlap,
+                "overlap_count": len(debt_ebitda_overlap),
+                "rule_triggered": len(debt_ebitda_overlap) >= 2,
+                "interpretation": (
+                    "Debt rising while EBITDA stagnated or declined."
+                    if len(debt_ebitda_overlap) >= 2
+                    else "Debt growth supported by EBITDA."
+                ),
+            },
         }
+    }
 
-    def asset_signals(self, fixed_assets: List[Optional[float]], net_debt: List[Optional[float]],
-                      dividend: List[Optional[float]], net_income: List[Optional[float]]):
-        # fixed asset YoY and count declines
-        fa_yoy = self.yoy(fixed_assets)
-        declines = sum(1 for v in fa_yoy if v is not None and v < 0)
-
-        # dividend payout ratio: abs(dividend) / abs(net_income) when both present and net_income != 0
-        payout = []
-        for d, n in zip(dividend, net_income):
-            if n in (None, 0) or d is None:
-                payout.append(None)
-            else:
-                try:
-                    payout.append(abs(d) / abs(n))
-                except Exception:
-                    payout.append(None)
-
-        # assets_shrinking: compare first and last fixed_assets only if both present
-        assets_shrinking = False
-        if fixed_assets and len(fixed_assets) >= 2:
-            fa_first = fixed_assets[0]
-            fa_last = fixed_assets[-1]
-            if fa_first is not None and fa_last is not None:
-                assets_shrinking = fa_last < fa_first
-
-        # debt_rising: compare first and last net_debt only if both present
-        debt_rising = False
-        if net_debt and len(net_debt) >= 2:
-            nd_first = net_debt[0]
-            nd_last = net_debt[-1]
-            if nd_first is not None and nd_last is not None:
-                debt_rising = nd_last > nd_first
-
-        return {
-            "fixed_asset_decline_years": declines,
-            "dividend_payout_ratio": payout,
-            "assets_shrinking": assets_shrinking,
-            "debt_rising": debt_rising
-        }
-
-    def evergreening_signals(self, rollover: List[Optional[float]], net_debt: List[Optional[float]],
-                             int_cap: List[Optional[float]], interest: List[Optional[float]],
-                             principal_repayment: List[Optional[float]]):
-        rollover_ratio = []
-        for r, nd in zip(rollover, net_debt):
-            if r is None or nd in (None, 0):
-                rollover_ratio.append(None)
-            else:
-                try:
-                    rollover_ratio.append(r / nd)
-                except Exception:
-                    rollover_ratio.append(None)
-
-        int_cap_ratio = []
-        for ic, it in zip(int_cap, interest):
-            if ic is None or it in (None, 0):
-                int_cap_ratio.append(None)
-            else:
-                try:
-                    int_cap_ratio.append(ic / it)
-                except Exception:
-                    int_cap_ratio.append(None)
-
-        principal_ratio = []
-        for pr, nd in zip(principal_repayment, net_debt):
-            if pr is None or nd in (None, 0):
-                principal_ratio.append(None)
-            else:
-                try:
-                    principal_ratio.append(abs(pr) / nd)
-                except Exception:
-                    principal_ratio.append(None)
-
-        return {
-            "rollover_ratio": rollover_ratio,
-            "interest_cap_ratio": int_cap_ratio,
-            "principal_repayment_ratio": principal_ratio
-        }
-
-    def circular_signals(self, rpt_sales: List[Optional[float]], total_sales: List[Optional[float]],
-                         rpt_recv: List[Optional[float]], total_recv: List[Optional[float]],
-                         revenue: List[Optional[float]], ocf: List[Optional[float]],
-                         assets: List[Optional[float]]):
-        rpt_sales_ratio = []
-        for r, t in zip(rpt_sales, total_sales):
-            if r is None or t in (None, 0):
-                rpt_sales_ratio.append(None)
-            else:
-                try:
-                    rpt_sales_ratio.append(r / t)
-                except Exception:
-                    rpt_sales_ratio.append(None)
-
-        rpt_assets_ratio = []
-        for r, a in zip(rpt_sales, assets):
-            if r is None or a in (None, 0):
-                rpt_assets_ratio.append(None)
-            else:
-                try:
-                    rpt_assets_ratio.append(r / a)
-                except Exception:
-                    rpt_assets_ratio.append(None)
-
-        rpt_recv_ratio = []
-        for r, t in zip(rpt_recv, total_recv):
-            if r is None or t in (None, 0):
-                rpt_recv_ratio.append(None)
-            else:
-                try:
-                    rpt_recv_ratio.append(r / t)
-                except Exception:
-                    rpt_recv_ratio.append(None)
-
-        return {
-            "rpt_sales_ratio": rpt_sales_ratio,
-            "rpt_assets_ratio": rpt_assets_ratio,
-            "rpt_recv_ratio": rpt_recv_ratio,
-            "recv_yoy": self.yoy(total_recv),
-            "rev_yoy": self.yoy(revenue),
-            "ocf_yoy": self.yoy(ocf)
-        }
+    return {
+        "zombie_company": zombie_company,
+        "loan_evergreening": loan_evergreening,
+    }

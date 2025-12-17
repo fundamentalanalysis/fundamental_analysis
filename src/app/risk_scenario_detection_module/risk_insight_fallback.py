@@ -1,15 +1,14 @@
-# risk_insight_fallback.py
-from typing import List, Dict
+from typing import List
 
 
-def generate_fallback_narrative(rules_triggered: List[Dict]) -> List[str]:
-    narrative = []
-    grouped = {}
-    for r in rules_triggered:
-        k = r.get("rule_name")
-        grouped.setdefault(k, []).append(r)
-    for name, items in grouped.items():
-        flags = sorted({it.get("flag") for it in items}, reverse=True)
-        reasons = "; ".join({it.get("reason") for it in items if it.get("reason")})
-        narrative.append(f"{name} ({', '.join(flags)}): {reasons}")
-    return narrative
+# def generate_fallback_insight(rules):
+#     if not rules:
+#         return ["No major structural or fraud-related risk scenarios detected."]
+
+#     return [f"{r.rule_name}: {r.reason}" for r in rules]
+
+
+def generate_fallback_insight(rules):
+    if not rules:
+        return ["No structural risk patterns detected."]
+    return [r.reason for r in rules]

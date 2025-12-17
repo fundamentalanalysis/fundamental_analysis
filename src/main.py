@@ -10,6 +10,17 @@ from fastapi import Request
 from src.app.request_model import AnalysisRequest
 from src.app.working_capital_module.wc_orchestrator import run_working_capital_module
 
+from src.app.risk_scenario_detection_module.risk_models import (
+    RiskScenarioInput,
+    YearRiskFinancialInput
+)
+from src.app.risk_scenario_detection_module.risk_orchestrator import (
+    RiskScenarioDetectionModule
+)
+
+
+
+
 # Ensure package imports work when running `python src/main.py`
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -55,9 +66,9 @@ from src.app.liquidity_module.liquidity_orchestrator import (
 # =============================================================
 # IMPORT RISK MODULE
 # =============================================================
-from src.app.risk_scenario_detection_module.risk_orchestrator import (
-    RiskOrchestrator,   
-)
+# from src.app.risk_scenario_detection_module.risk_orchestrator import (
+#     RiskOrchestrator,   
+# )
 
 
 # ---------------------------------------------------------
@@ -80,7 +91,7 @@ DEFAULT_ASSET_BENCHMARKS = IndustryAssetBenchmarks()
 
 borrowings_engine = BorrowingsModule()
 asset_quality_engine = AssetIntangibleQualityModule()
-risk_engine = RiskOrchestrator()  
+risk_engine = RiskScenarioDetectionModule() 
 
 
 @app.post("/borrowings/analyze")
@@ -176,15 +187,57 @@ async def analyze_liquidity(req: AnalysisRequest):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
     
+# @app.post("/risk/analyze")
+# async def analyze_risk(req: AnalysisRequest):
+#     try:
+#         req_data = req.dict()
+#         result = await risk_engine.run(req_data)  # async call to RiskOrchestrator
+#         return result
+#     except Exception as e:
+#         return JSONResponse({"error": str(e)}, status_code=500)
+    
 @app.post("/risk/analyze")
-async def analyze_risk(req: AnalysisRequest):
+async def analyze_risk_scenario(req: Request):
     try:
-        req_data = req.dict()
-        result = await risk_engine.run(req_data)  # async call to RiskOrchestrator
+        req_data = await req.json()
+
+        financial_years = [
+            YearRiskFinancialInput(
+                year=fy["year"],
+                revenue=fy["revenue"],
+                operating_profit=fy["operating_profit"],
+                interest=fy["interest"],
+                net_profit=fy["net_profit"],
+                other_income=fy.get("other_income", 0.0),
+
+                borrowings=fy["borrowings"],
+                lease_liabilities=fy.get("lease_liabilities", 0.0),
+                fixed_assets=fy["fixed_assets"],
+                total_assets=fy["total_assets"],
+                trade_receivables=fy["trade_receivables"],
+                cash_equivalents=fy["cash_equivalents"],
+
+                cash_from_operating_activity=fy["cash_from_operating_activity"],
+                dividends_paid=fy.get("dividends_paid", 0.0),
+                proceeds_from_borrowings=fy.get("proceeds_from_borrowings", 0.0),
+                repayment_of_borrowings=fy.get("repayment_of_borrowings", 0.0),
+            )
+            for fy in req_data["financial_data"]["financial_years"]
+        ]
+
+        module_input = RiskScenarioInput(
+            company_id=req_data["company"].upper(),
+            industry_code=req_data.get("industry_code", "GENERAL").upper(),
+            financials_5y=financial_years,
+        )
+
+        result = risk_engine.run(module_input)
         return result
+
+
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    
+
 
 if __name__ == "__main__":
     import uvicorn

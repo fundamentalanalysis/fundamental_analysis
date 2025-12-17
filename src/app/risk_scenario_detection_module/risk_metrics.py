@@ -1,42 +1,77 @@
+# def compute_per_year_metrics(financials):
+#     metrics = {}
+
+#     for f in financials:
+#         net_debt = f.borrowings + f.lease_liabilities - f.cash_equivalents
+
+#         metrics[f.year] = {
+#             "year": f.year,
+#             "revenue": f.revenue,
+#             "ebit": f.operating_profit,
+#             "interest": f.interest,
+#             "net_profit": f.net_profit,
+#             "other_income": f.other_income,
+
+#             "cash": f.cash_equivalents,
+#             "cfo": f.cash_from_operating_activity,
+
+#             "fixed_assets": f.fixed_assets,
+#             "receivables": f.trade_receivables,
+
+#             "borrowings": f.borrowings,
+#             "net_debt": net_debt,
+
+#             "dividends": f.dividends_paid,
+#             "proceeds": f.proceeds_from_borrowings,
+#             "repayment": abs(f.repayment_of_borrowings),
+#         }
+
+#     return metrics
+
+
 # risk_metrics.py
-from typing import Dict, Any, Optional
 
 
-def safe_float(v: Optional[float]) -> Optional[float]:
-    try:
-        return None if v is None else float(v)
-    except Exception:
-        return None
+def compute_per_year_metrics(financials):
+    metrics = {}
 
+    for f in financials:
+        net_debt = f.borrowings + f.lease_liabilities - f.cash_equivalents
+        ebitda = f.operating_profit + f.depreciation
 
-def compute_derived_metrics(year: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Compute per-year derived metrics from the raw year dict (matches your input).
-    """
-    out = dict(year)
+        metrics[f.year] = {
+            "year": f.year,
 
-    # loan rollover: proceeds - repayment (if both exist)
-    proceeds = safe_float(year.get("proceeds_from_borrowings"))
-    repayment = safe_float(year.get("repayment_of_borrowings"))
-    if proceeds is not None and repayment is not None:
-        out["loan_rollover_amount"] = proceeds - repayment
+            # Profitability
+            "revenue": f.revenue,
+            "ebit": f.operating_profit,
+            "ebitda": ebitda,
+            "interest": f.interest,
+            "net_profit": f.net_profit,
+            "other_income": f.other_income,
 
-    # interest capitalized
-    interest_paid_fin = safe_float(year.get("interest_paid_fin"))
-    interest = safe_float(year.get("interest"))
-    if interest_paid_fin is not None and interest is not None:
-        out["interest_capitalized"] = interest_paid_fin - interest
+            # Cash
+            "cash": f.cash_equivalents,
+            "cfo": f.cash_from_operating_activity,
 
-    # net_debt approximation (if missing)
-    if year.get("net_debt") is None:
-        borrowings = safe_float(year.get("borrowings") or 0)
+            # Assets
+            "fixed_assets": f.fixed_assets,
+            "receivables": f.trade_receivables,
 
-        out["net_debt"] = borrowings
+            # Debt
+            "borrowings": f.borrowings,
+            "short_term_debt": f.short_term_debt,
+            "net_debt": net_debt,
 
-    # canonical OCF
-    if out.get("operating_cash_flow") is None:
-        if year.get("cash_from_operating_activity") is not None:
-            out["operating_cash_flow"] = safe_float(year.get("cash_from_operating_activity"))
+            # Financing
+            "proceeds": f.proceeds_from_borrowings,
+            "repayment": abs(f.repayment_of_borrowings),
+            "interest_capitalized": f.interest_capitalized,
 
-    # rpt ratios placeholders (filled in trend module)
-    return out
+            # RPT
+            "rpt_sales": f.related_party_sales,
+            "rpt_receivables": f.related_party_receivables,
+        }
+
+    return metrics
+
