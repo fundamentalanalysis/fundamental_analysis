@@ -48,7 +48,8 @@ class WorkingCapitalModule:
                 "No metrics computed. Check if financial data is valid and contains required fields."
             )
 
-        print(f"DEBUG: per_year_metrics years: {list(per_year_metrics.keys())}")
+        print(
+            f"DEBUG: per_year_metrics years: {list(per_year_metrics.keys())}")
         latest_year = max(per_year_metrics.keys(), key=extract_year)
         print(f"DEBUG: Latest year: {latest_year}")
         print(f"DEBUG: Latest metrics: {per_year_metrics[latest_year]}")
@@ -106,7 +107,8 @@ class WorkingCapitalModule:
         # STEP 5: Key Metrics & Deterministic Notes
         # -----------------------------
         print("\n---- STEP 5: Extracting Key Metrics & Notes ----")
-        key_metrics = self._extract_key_metrics(per_year_metrics, trend_summary)
+        key_metrics = self._extract_key_metrics(
+            per_year_metrics, trend_summary)
         print("DEBUG: Key Metrics:", key_metrics)
 
         deterministic_notes = self._build_narrative_notes(
@@ -159,12 +161,15 @@ class WorkingCapitalModule:
 
         for rule in rule_results:
             if rule.flag == "RED":
-                severity = "CRITICAL" if rule.rule_id in {"D1", "E1"} else "HIGH"
+                severity = "CRITICAL" if rule.rule_id in {
+                    "D1", "E1"} else "RED"
                 red_flags.append(
                     {
+                        "module": "working_capital",
                         "severity": severity,
                         "title": rule.rule_name,
                         "detail": rule.reason,
+                        "risk_category": "working_capital",
                     }
                 )
             elif rule.flag == "GREEN":
@@ -202,7 +207,8 @@ class WorkingCapitalModule:
     ) -> List[str]:
         notes: List[str] = []
         if key_metrics.get("ccc") is not None:
-            notes.append(f"Cash Conversion Cycle is {key_metrics['ccc']:.1f} days.")
+            notes.append(
+                f"Cash Conversion Cycle is {key_metrics['ccc']:.1f} days.")
         if key_metrics.get("dso") is not None:
             notes.append(f"DSO is {key_metrics['dso']:.1f} days.")
         if red_flags:
@@ -231,12 +237,14 @@ def run_working_capital_module(payload: dict):
         for k in payload.get("financial_data", {}).get("financial_years", []):
             # Ensure required keys exist and are numeric
             try:
-                manufacturing_cost =parse_percent(k.get("manufacturing_cost", 0))
+                manufacturing_cost = parse_percent(
+                    k.get("manufacturing_cost", 0))
                 # other_cost = parse_percent(k.get("other_cost", 0))
                 material_cost = parse_percent(k.get("material_cost", 0))
                 revenue = k.get("revenue", 0)
                 # Calculate cogs as per the formula
-                k["cogs"] = revenue * (manufacturing_cost + material_cost) / 100
+                k["cogs"] = revenue * \
+                    (manufacturing_cost + material_cost) / 100
                 print(f"DEBUG: Financial year data - Year: {k.get('year')}")
             except Exception as e:
                 print(f"ERROR processing financial year data: {e}")

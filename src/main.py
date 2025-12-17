@@ -1,4 +1,17 @@
 # fundamental_analysis/src/main.py
+from pydantic import BaseModel, Field
+from src.app.risk_scenario_detection_module.risk_orchestrator import (
+    RiskOrchestrator,
+)
+from src.app.asset_intangible_quality_module.aiqm_models import AssetIntangibleInput
+from src.app.asset_intangible_quality_module.aiqm_orchestrator import run_aiqm_module
+from src.app.asset_intangible_quality_module.aiqm_models import (
+    AssetIntangibleInput,
+    YearAssetIntangibleInput,
+    AssetIntangibleBenchmarks,
+    FinancialDataBlock,
+)
+from src.app.asset_intangible_quality_module.aiqm_orchestrator import AssetIntangibleQualityModule
 from src.app.quality_of_earnings_module.qoe_orchestrator import run_quality_of_earnings_module
 from src.app.equity_funding_mix_module.equity_funding_mix_models import (
     EquityFundingInput,
@@ -29,7 +42,7 @@ from src.app.borrowing_module.debt_models import (
 )
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 
 from src.app.quality_of_earnings_module.qoe_models import QoEBenchmarks, QoEYearInput, QualityOfEarningsInput
 from fastapi import FastAPI, HTTPException
@@ -38,36 +51,13 @@ from pydantic import BaseModel, Field, ValidationError
 from fastapi import Request
 from src.app.request_model import AnalysisRequest
 from src.app.working_capital_module.wc_orchestrator import run_working_capital_module
+from src.app.red_flag_aggregator_module.red_flag_aggregator_orchestrator import aggregate_red_flags
 
 # Ensure package imports work when running `python src/main.py`
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from src.app.borrowing_module.debt_models import (
-    BorrowingsInput,
-    YearFinancialInput,
-    IndustryBenchmarks,
-    CovenantLimits,
-)
-from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
-
-
-from src.app.asset_intangible_quality_module.aiqm_orchestrator import AssetIntangibleQualityModule
-from src.app.asset_intangible_quality_module.aiqm_models import (
-    AssetIntangibleInput,
-    YearAssetIntangibleInput,
-    AssetIntangibleBenchmarks,
-    FinancialDataBlock,
-)
-
-
-from src.app.borrowing_module.debt_orchestrator import BorrowingsModule
-from src.app.capex_cwip_module.orchestrator import CapexCwipModule
-
-from src.app.asset_intangible_quality_module.aiqm_orchestrator import run_aiqm_module
-
-from src.app.asset_intangible_quality_module.aiqm_models import AssetIntangibleInput
 
 DEFAULT_BENCHMARKS = IndustryBenchmarks(
     target_de_ratio=0.5,
@@ -84,9 +74,6 @@ DEFAULT_BENCHMARKS = IndustryBenchmarks(
 # =============================================================
 # IMPORT RISK MODULE
 # =============================================================
-from src.app.risk_scenario_detection_module.risk_orchestrator import (
-    RiskOrchestrator,   
-)
 
 
 # ---------------------------------------------------------
@@ -109,7 +96,7 @@ DEFAULT_COVENANTS = CovenantLimits(
 
 borrowings_engine = BorrowingsModule()
 asset_quality_engine = AssetIntangibleQualityModule()
-risk_engine = RiskOrchestrator()  
+risk_engine = RiskOrchestrator()
 
 
 @app.post("/borrowings/analyze")
@@ -172,7 +159,8 @@ async def analyze(request: AnalysisRequest):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    
+
+
 @app.post("/quality_of_earnings/analyze")
 async def analyze_qoe(req: AnalysisRequest):
     try:
@@ -186,15 +174,11 @@ async def analyze_qoe(req: AnalysisRequest):
             "financials_5y": financial_years
         }
 
-        
-
         result = run_quality_of_earnings_module(qoe_input)
         return result
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-
-
 
 
 @app.post("/capex_cwip_module/analyze")
@@ -231,16 +215,62 @@ async def analyze_liquidity(req: AnalysisRequest):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    
+
+
 @app.post("/risk/analyze")
 async def analyze_risk(req: AnalysisRequest):
     try:
         req_data = req.dict()
-        result = await risk_engine.run(req_data)  # async call to RiskOrchestrator
+        # async call to RiskOrchestrator
+        result = await risk_engine.run(req_data)
         return result
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    
+
+
+# -----------------------
+# Red Flag Aggregator
+# -----------------------
+
+
+class RedFlagSchema(BaseModel):
+    module: str
+    severity: str
+    title: str
+    detail: str
+    risk_category: str
+    metric: Optional[str] = None
+    value: Optional[Any] = None
+    threshold: Optional[Any] = None
+    period: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
+
+
+class RedFlagAggregatorRequest(BaseModel):
+    # Accept `company` for compatibility with other endpoints; orchestrator expects `company_id`.
+    company: str = Field(
+        ..., description="Company identifier (will be uppercased by orchestrator caller)")
+    module_red_flags: Dict[str, List[RedFlagSchema]]
+
+
+@app.post("/redflags/analyze")
+async def analyze_redflags(req: RedFlagAggregatorRequest):
+    try:
+        # Build payload matching orchestrator contract
+        payload = {
+            "company_id": req.company,
+            "module_red_flags": {k: [f.dict() for f in v] for k, v in req.module_red_flags.items()},
+        }
+
+        result = aggregate_red_flags(payload)
+
+        # print("Red Flag Aggregator Result:", result)
+
+        return result
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------- Equity Funding Mix API Request Schemas ----------
@@ -256,7 +286,8 @@ async def analyze_equity_funding_mix(req: AnalysisRequest):
         raise HTTPException(status_code=422, detail=ve.errors())
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    
+
+
 @app.post("/asset_intangible_quality/analyze")
 async def analyze_asset_quality(req: Request):
     try:

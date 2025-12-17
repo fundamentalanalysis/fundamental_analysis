@@ -59,7 +59,8 @@ class AssetIntangibleQualityModule:
         per_year_metrics = compute_per_year_metrics(financials_list)
 
         if not per_year_metrics:
-            raise ValueError("ERROR: No metrics generated. Please verify input data.")
+            raise ValueError(
+                "ERROR: No metrics generated. Please verify input data.")
 
         latest_year = max(per_year_metrics.keys(), key=extract_year)
         latest_metrics = per_year_metrics[latest_year]
@@ -81,7 +82,8 @@ class AssetIntangibleQualityModule:
             trend_summary["revenue"]["yoy_growth_pct"].get("Y_vs_Y-1")
 
         latest_metrics["intangible_growth_yoy"] = \
-            trend_summary["intangible_assets"]["yoy_growth_pct"].get("Y_vs_Y-1")
+            trend_summary["intangible_assets"]["yoy_growth_pct"].get(
+                "Y_vs_Y-1")
 
         latest_metrics["operating_asset_growth"] = \
             trend_summary["cagr"].get("operating_asset_cagr")
@@ -157,11 +159,14 @@ class AssetIntangibleQualityModule:
 
         for rule in rule_results:
             if rule.flag == "RED":
-                severity = "CRITICAL" if rule.rule_id in {"D1", "C1"} else "HIGH"
+                severity = "CRITICAL" if rule.rule_id in {
+                    "D1", "C1"} else "RED"
                 red_flags.append({
+                    "module": "asset_intangible_quality",
                     "severity": severity,
                     "title": rule.rule_name,
                     "detail": rule.reason,
+                    "risk_category": "asset_utilization"
                 })
             elif rule.flag == "GREEN":
                 positives.append(f"{rule.rule_name}: {rule.reason}")

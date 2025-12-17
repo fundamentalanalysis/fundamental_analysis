@@ -8,6 +8,7 @@ from .asset_models import AssetQualityInput, AssetQualityOutput, RuleResult
 from .asset_rules import apply_rules
 from .asset_trend import compute_trend_metrics
 
+
 class AssetIntangibleQualityModule:
     def __init__(self, config: IndustryAssetBenchmarks = None):
         self.config = config or load_asset_config()
@@ -15,26 +16,27 @@ class AssetIntangibleQualityModule:
     def run(self, input_data: AssetQualityInput) -> AssetQualityOutput:
         # 1. Compute Metrics
         per_year_metrics = compute_per_year_metrics(input_data.financials_5y)
-        
+
         # 2. Compute Trends
         trend_metrics = compute_trend_metrics(per_year_metrics)
-        
+
         # 3. Apply Rules
         rule_results = apply_rules(
             metrics=per_year_metrics,
             trends=trend_metrics,
             benchmarks=input_data.industry_asset_quality_benchmarks or self.config
         )
-        
+
         # 4. Compute Base Score
         base_score = self._compute_score(rule_results)
-        
+
         # 5. Summarize Flags
         red_flags, positives = self._summarize(rule_results)
-        
+
         # 6. Generate Deterministic Narrative
-        deterministic_notes = self._build_narrative_notes(per_year_metrics, trend_metrics, red_flags)
-        
+        deterministic_notes = self._build_narrative_notes(
+            per_year_metrics, trend_metrics, red_flags)
+
         # 7. LLM Reasoning
         narrative, adjusted_score = generate_asset_llm_narrative(
             company_id=input_data.company_id,
@@ -44,7 +46,7 @@ class AssetIntangibleQualityModule:
             deterministic_notes=deterministic_notes,
             base_score=base_score,
         )
-        
+
         # 8. Construct Output
         return AssetQualityOutput(
             module="AssetIntangibleQuality",
@@ -68,7 +70,7 @@ class AssetIntangibleQualityModule:
         # etc.
         # User provided general scoring logic in Step 95:
         # GREEN=0, YELLOW=5, RED=10, CRITICAL=20
-        
+
         for r in rule_results:
             if r.flag == "RED":
                 score -= 10
@@ -76,7 +78,7 @@ class AssetIntangibleQualityModule:
                 score -= 5
             elif r.flag == "CRITICAL":
                 score -= 20
-                
+
         return max(0, min(100, score))
 
     def _summarize(self, rule_results: List[RuleResult]) -> Tuple[List[Dict], List[str]]:
@@ -84,14 +86,16 @@ class AssetIntangibleQualityModule:
         positives = []
         for r in rule_results:
             if r.flag in ("RED", "CRITICAL"):
-                severity = "CRITICAL" if r.flag == "CRITICAL" else "HIGH"
-                # Some REDs might be CRITICAL based on rule ID if specified, but for now map RED->HIGH
+                severity = "CRITICAL" if r.flag == "CRITICAL" else "RED"
+                # Some REDs might be CRITICAL based on rule ID if specified, but for now map RED->RED
                 # Spec Step 140 Section 6 shows "CRITICAL" severity in red_flags.
                 # Let's map based on flag.
                 red_flags.append({
+                    "module": "asset_quality",
                     "severity": severity,
                     "title": r.rule_name,
-                    "detail": r.reason
+                    "detail": r.reason,
+                    "risk_category": "asset_utilization"
                 })
             elif r.flag == "GREEN":
                 positives.append(f"{r.rule_name}: {r.reason}")
@@ -101,20 +105,24 @@ class AssetIntangibleQualityModule:
         notes = []
         latest_year = max(metrics.keys())
         latest = metrics[latest_year]
-        
+
         if trends.get("asset_turnover_declining"):
-            notes.append("Asset turnover has been declining for three years, indicating weakening asset utilization.")
-        
+            notes.append(
+                "Asset turnover has been declining for three years, indicating weakening asset utilization.")
+
         age = latest.get("asset_age_proxy")
         if age and age > 0.7:
-            notes.append(f"Asset age proxy exceeds {age*100:.0f}%, suggesting an aging asset base.")
-            
+            notes.append(
+                f"Asset age proxy exceeds {age*100:.0f}%, suggesting an aging asset base.")
+
         gw_cagr = trends.get("goodwill_cagr")
         rev_cagr = trends.get("revenue_cagr")
         if gw_cagr and rev_cagr and gw_cagr > rev_cagr:
-            notes.append("Goodwill has increased faster than revenue, suggesting acquisitions may not be value-accretive.")
-            
+            notes.append(
+                "Goodwill has increased faster than revenue, suggesting acquisitions may not be value-accretive.")
+
         if red_flags:
-            notes.append(f"Key concerns: {', '.join(f['title'] for f in red_flags[:2])}.")
-            
+            notes.append(
+                f"Key concerns: {', '.join(f['title'] for f in red_flags[:2])}.")
+
         return notes or ["Asset quality assessment based on latest financials."]

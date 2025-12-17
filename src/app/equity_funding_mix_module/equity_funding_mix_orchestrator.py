@@ -1,3 +1,4 @@
+from .equity_funding_mix_models import EquityFundingInput as EquityYearFinancialInput, EquityFundingOutput, IndustryBenchmarks as EquityIndustryBenchmarks
 from collections import Counter
 from typing import Tuple, List, Dict
 
@@ -103,12 +104,14 @@ class EquityFundingMixModule:
         for rule in rule_results:
             if rule.flag == "RED":
                 severity = "CRITICAL" if rule.rule_id in {
-                    "C1", "E2", "D1"} else "HIGH"
+                    "C1", "E2", "D1"} else "RED"
                 red_flags.append(
                     {
+                        "module": "equity_funding_mix",
                         "severity": severity,
                         "title": rule.rule_name,
                         "detail": rule.reason,
+                        "risk_category": "leverage",
                     }
                 )
             elif rule.flag == "GREEN":
@@ -209,7 +212,7 @@ class EquityFundingMixModule:
                 "insight": None,  # Will be populated by LLM
             }
         return trend_summary
-from .equity_funding_mix_models import EquityFundingInput as EquityYearFinancialInput, EquityFundingOutput, IndustryBenchmarks as EquityIndustryBenchmarks
+
 
 equity_funding_engine = EquityFundingMixModule()
 
@@ -221,63 +224,65 @@ DEFAULT_EQUITY_BENCHMARKS = EquityIndustryBenchmarks(
     roe_modest=0.10,
     dilution_warning=0.05,
 )
+
+
 def run_equity_funding_mix_module(efi: dict) -> EquityFundingOutput:
-        # Convert request data, computing missing equity fields if needed
-        equity_years = []
-        
-        for fy in efi["financial_data"]["financial_years"]:
-            fy_dict = fy
+    # Convert request data, computing missing equity fields if needed
+    equity_years = []
 
-            # 1. Compute total debt: short_term + long_term + lease_liabilities
-            if fy_dict.get("debt") is None:
-                st_debt = fy_dict.get("short_term_debt") or 0.0
-                lt_debt = fy_dict.get("long_term_debt") or 0.0
-                lease_liab = fy_dict.get("lease_liabilities") or 0.0
-                fy_dict["debt"] = st_debt + lt_debt + lease_liab
+    for fy in efi["financial_data"]["financial_years"]:
+        fy_dict = fy
 
-            # 2. Compute share_capital (use from input if available, otherwise use total_equity)
-            if fy_dict.get("share_capital") is None:
-                fy_dict["share_capital"] = fy_dict.get("total_equity") or 0.0
+        # 1. Compute total debt: short_term + long_term + lease_liabilities
+        if fy_dict.get("debt") is None:
+            st_debt = fy_dict.get("short_term_debt") or 0.0
+            lt_debt = fy_dict.get("long_term_debt") or 0.0
+            lease_liab = fy_dict.get("lease_liabilities") or 0.0
+            fy_dict["debt"] = st_debt + lt_debt + lease_liab
 
-            # 3. Compute reserves_and_surplus (use from input if available, otherwise default to 0)
-            if fy_dict.get("reserves_and_surplus") is None:
-                fy_dict["reserves_and_surplus"] = fy_dict.get(
-                    "reserves") or 0.0
+        # 2. Compute share_capital (use from input if available, otherwise use total_equity)
+        if fy_dict.get("share_capital") is None:
+            fy_dict["share_capital"] = fy_dict.get("total_equity") or 0.0
 
-            # 4. Compute net_worth = share_capital + reserves_and_surplus
-            if fy_dict.get("net_worth") is None:
-                fy_dict["net_worth"] = (fy_dict.get(
-                    "share_capital") or 0.0) + (fy_dict.get("reserves_and_surplus") or 0.0)
+        # 3. Compute reserves_and_surplus (use from input if available, otherwise default to 0)
+        if fy_dict.get("reserves_and_surplus") is None:
+            fy_dict["reserves_and_surplus"] = fy_dict.get(
+                "reserves") or 0.0
 
-            # 5. Compute PAT from operating profit or profit_from_operations
-            fy_dict["pat"] = fy_dict.get("net_profit")
+        # 4. Compute net_worth = share_capital + reserves_and_surplus
+        if fy_dict.get("net_worth") is None:
+            fy_dict["net_worth"] = (fy_dict.get(
+                "share_capital") or 0.0) + (fy_dict.get("reserves_and_surplus") or 0.0)
 
-            # if fy_dict.get("pat") is None:
-            #     pat_val = fy_dict.get("net_profit") or 0.0
-            #     print("Initial PAT from operations:", pat_val)
-            #     fy_dict["pat"] = max(0, pat_val)
+        # 5. Compute PAT from operating profit or profit_from_operations
+        fy_dict["pat"] = fy_dict.get("net_profit")
 
-            # 6. Set dividend_paid (default 0 if not provided)
-            if fy_dict.get("dividends_paid") is None:
-                fy_dict["dividends_paid"] = 0.0
+        # if fy_dict.get("pat") is None:
+        #     pat_val = fy_dict.get("net_profit") or 0.0
+        #     print("Initial PAT from operations:", pat_val)
+        #     fy_dict["pat"] = max(0, pat_val)
 
-            # fy_dict["dividends_paid"] = fy_dict.get("dividends_paid")
-            # print("Year:", fy_dict["year"], "PAT:", fy_dict["pat"], "Dividends Paid:", fy_dict["dividends_paid"])
+        # 6. Set dividend_paid (default 0 if not provided)
+        if fy_dict.get("dividends_paid") is None:
+            fy_dict["dividends_paid"] = 0.0
 
-            # 7. Compute free_cash_flow if not provided
-            if fy_dict.get("free_cash_flow") is None:
-                ocf = fy_dict.get("cash_from_operating_activity") or 0.0
-                capex = fy_dict.get("fixed_assets_purchased") or 0.0
-                fy_dict["free_cash_flow"] = ocf + \
-                    capex  # capex is negative (outflow)
+        # fy_dict["dividends_paid"] = fy_dict.get("dividends_paid")
+        # print("Year:", fy_dict["year"], "PAT:", fy_dict["pat"], "Dividends Paid:", fy_dict["dividends_paid"])
 
-            equity_years.append(YearFinancialInput(**fy_dict))
+        # 7. Compute free_cash_flow if not provided
+        if fy_dict.get("free_cash_flow") is None:
+            ocf = fy_dict.get("cash_from_operating_activity") or 0.0
+            capex = fy_dict.get("fixed_assets_purchased") or 0.0
+            fy_dict["free_cash_flow"] = ocf + \
+                capex  # capex is negative (outflow)
 
-        module_input = EquityFundingInput(
-            company=efi["company"].upper(),
-            industry_code=(efi.get("industry_code") or "GENERAL").upper(),
-            financials_5y=equity_years,
-            industry_equity_benchmarks=DEFAULT_EQUITY_BENCHMARKS,
-        )
-        result = equity_funding_engine.run(module_input)
-        return result
+        equity_years.append(YearFinancialInput(**fy_dict))
+
+    module_input = EquityFundingInput(
+        company=efi["company"].upper(),
+        industry_code=(efi.get("industry_code") or "GENERAL").upper(),
+        financials_5y=equity_years,
+        industry_equity_benchmarks=DEFAULT_EQUITY_BENCHMARKS,
+    )
+    result = equity_funding_engine.run(module_input)
+    return result

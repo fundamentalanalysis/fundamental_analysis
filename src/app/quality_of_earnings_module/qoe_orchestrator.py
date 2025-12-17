@@ -45,7 +45,8 @@ class QualityOfEarningsModule:
         per_year_metrics = compute_qoe_metrics_per_year(financials_list)
 
         if not per_year_metrics:
-            raise ValueError("No QoE metrics computed. Check financial data fields.")
+            raise ValueError(
+                "No QoE metrics computed. Check financial data fields.")
 
         print("DEBUG: Years with metrics:", list(per_year_metrics.keys()))
         latest_year = max(per_year_metrics.keys(), key=extract_year)
@@ -102,7 +103,8 @@ class QualityOfEarningsModule:
         key_metrics = self._extract_key_metrics(per_year_metrics)
         print("DEBUG: Key QoE Metrics:", key_metrics)
 
-        deterministic_notes = self._build_narrative_notes(key_metrics, red_flags)
+        deterministic_notes = self._build_narrative_notes(
+            key_metrics, red_flags)
         print("DEBUG: Deterministic Notes:", deterministic_notes)
 
         # -----------------------------
@@ -150,16 +152,20 @@ class QualityOfEarningsModule:
 
         for rule in rule_results:
             if rule.flag == "RED":
-                severity = "CRITICAL" if rule.rule_id in {"A1", "B1"} else "HIGH"
+                severity = "CRITICAL" if rule.rule_id in {
+                    "A1", "B1"} else "RED"
                 red_flags.append({
+                    "module": "quality_of_earnings",
                     "severity": severity,
                     "title": rule.rule_name,
-                    "detail": rule.reason
+                    "detail": rule.reason,
+                    "risk_category": "earnings_quality",
                 })
             elif rule.flag == "GREEN":
                 positives.append(f"{rule.rule_name}: {rule.reason}")
 
         return red_flags, positives
+
     @staticmethod
     def _extract_key_metrics(per_year_metrics: Dict[int, dict]) -> Dict[str, float]:
         # Determine latest year correctly
@@ -177,7 +183,6 @@ class QualityOfEarningsModule:
             "other_income_ratio": latest.get("other_income_ratio"),
         }
 
-
     @staticmethod
     def _build_narrative_notes(key_metrics, red_flags):
         notes = []
@@ -192,11 +197,13 @@ class QualityOfEarningsModule:
 
         # Accruals Ratio
         if key_metrics.get("accruals_ratio") is not None:
-            notes.append(f"Accruals Ratio = {key_metrics['accruals_ratio']:.3f}")
+            notes.append(
+                f"Accruals Ratio = {key_metrics['accruals_ratio']:.3f}")
 
         # Include top 2 red flags if present
         if red_flags:
-            notes.append("Key concerns: " + ", ".join(x["title"] for x in red_flags[:2]))
+            notes.append("Key concerns: " +
+                         ", ".join(x["title"] for x in red_flags[:2]))
 
         return notes
 
@@ -213,20 +220,20 @@ def run_quality_of_earnings_module(payload: dict):
             for fy in payload["financials_5y"]
         ]
         print("DEBUG: Parsed financial years:", [f for f in financial_years])
-        
+
         financial_data = QoEFinancialData(
             financial_years=financial_years
         )
 
         benchmarks = QoEBenchmarks()
         qoe_input = QualityOfEarningsInput(
-            company = payload["company"],
-            industry_code = payload.get("industry_code", "GENERAL"),
-            financials_5y = financial_data,
-            benchmarks = benchmarks
-            
+            company=payload["company"],
+            industry_code=payload.get("industry_code", "GENERAL"),
+            financials_5y=financial_data,
+            benchmarks=benchmarks
+
         )
-        
+
         # input_data = QualityOfEarningsInput(**payload)
 
         print("DEBUG: Input parsed successfully. Running QoE module...")

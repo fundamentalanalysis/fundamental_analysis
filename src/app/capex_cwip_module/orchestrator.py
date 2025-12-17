@@ -5,6 +5,8 @@ from .llm_agent import generate_llm_narrative
 from .models import RuleResult
 
 # Safe formatting helper
+
+
 def fmt(x):
     return f"{x:.2f}" if isinstance(x, (int, float)) else "NA"
 
@@ -36,7 +38,7 @@ class CapexCwipModule:
         trend_input = {fy["year"]: fy for fy in financials}
         trend_metrics = compute_trends(trend_input)
 
-        # 3) Rules       
+        # 3) Rules
         rule_results = apply_rules(per_year_metrics, trend_metrics)
 
         # 4) Latest year
@@ -78,7 +80,6 @@ class CapexCwipModule:
             values = list(values)[-4:]
             labels = labels[:len(values)]
             return {labels[i]: values[-(i+1)] for i in range(len(values))}
-            
 
         trend_summary = {
             "capex": {
@@ -96,7 +97,7 @@ class CapexCwipModule:
                 "yoy_growth_pct": as_yoy_dict(trend_metrics["nfa_yoy"]),
                 "insight": None
             }
-        }       
+        }
 
         # 8) Deterministic fallback notes
         deterministic_notes = [
@@ -128,9 +129,11 @@ class CapexCwipModule:
         for r in rule_results:
             if r.flag == "RED":
                 red_flags.append({
+                    "module": "capex_cwip",
                     "severity": "CRITICAL",
                     "title": r.rule_name,
-                    "detail": r.reason
+                    "detail": r.reason,
+                    "risk_category": "asset_utilization",
                 })
             elif r.flag == "GREEN":
                 positives.append(f"{r.rule_name}: {r.reason}")

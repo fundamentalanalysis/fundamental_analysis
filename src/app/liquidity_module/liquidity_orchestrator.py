@@ -2,10 +2,11 @@ from collections import Counter
 from typing import Dict, List, Tuple
 
 from .liquidity_metrics import compute_per_year_metrics
-from .liquidity_trend import compute_liquidity_trends      # NEW: your updated trend logic
+# NEW: your updated trend logic
+from .liquidity_trend import compute_liquidity_trends
 from .liquidity_rules import evaluate_rules
 from .liquidity_llm import generate_liquidity_narrative
-from .liquidity_models import LiquidityModuleOutput, RuleResult , YearFinancials as LiquidityYearFinancials
+from .liquidity_models import LiquidityModuleOutput, RuleResult, YearFinancials as LiquidityYearFinancials
 from .liquidity_insight_fallback import generate_liquidity_fallback_insight   # add if needed
 
 
@@ -18,9 +19,9 @@ class LiquidityModule:
         # 1. Compute per-year structured metrics
         # -------------------------------
 
-        #print("computing per-year liquidity metrics...")
+        # print("computing per-year liquidity metrics...")
         per_year_metrics = compute_per_year_metrics(financials)
-        #print("computed per-year liquidity metrics.")
+        # print("computed per-year liquidity metrics.")
 
         latest_year = max(per_year_metrics.keys())
         metrics_latest = per_year_metrics[latest_year]
@@ -28,18 +29,19 @@ class LiquidityModule:
         # -------------------------------
         # 2. Compute YoY trend metrics (cash/receivables/inventory/OCF/CL)
         # -------------------------------
-        #print("computing liquidity trends...")
+        # print("computing liquidity trends...")
         trend_metrics = compute_liquidity_trends(financials)
-        #print("computed liquidity trends.")
+        # print("computed liquidity trends.")
 
         # -------------------------------
         # 3. Evaluate liquidity rules
         # -------------------------------
-        #print("Evaluating liquidity rules...")
+        # print("Evaluating liquidity rules...")
         latest_year = max(per_year_metrics.keys())
-        rule_dicts = evaluate_rules(per_year_metrics[latest_year], trend_metrics)
+        rule_dicts = evaluate_rules(
+            per_year_metrics[latest_year], trend_metrics)
 
-        #print(f"Evaluated {len(rule_dicts)} rules.")
+        # print(f"Evaluated {len(rule_dicts)} rules.")
 
         # -------------------------------
         # 4. Convert to RuleResult objects
@@ -59,23 +61,24 @@ class LiquidityModule:
         # -------------------------------
         # 5. Compute score
         # -------------------------------
-        #print("Computing liquidity score...")
+        # print("Computing liquidity score...")
         score = self._compute_score(rule_results)
-        #print(f"Computed liquidity score: {score}")
+        # print(f"Computed liquidity score: {score}")
         summary_color = self._score_to_color(score)
 
         # -------------------------------
         # 6. Classify red flags + positives
         # -------------------------------
-        #print("Summarizing liquidity flags...")
+        # print("Summarizing liquidity flags...")
         red_flags, positives = self._summarize(rule_results)
 
         # -------------------------------
         # 7. Extract key liquidity metrics (like borrowings module)
         # -------------------------------
-        #print("Extracting key liquidity metrics...")
-        key_metrics = self._extract_key_metrics(per_year_metrics, trend_metrics)
-        #print("Extracted key liquidity metrics.")   
+        # print("Extracting key liquidity metrics...")
+        key_metrics = self._extract_key_metrics(
+            per_year_metrics, trend_metrics)
+        # print("Extracted key liquidity metrics.")
         # -------------------------------
         # 8. Build trend summary (Y, Y-1, Y-2...)
         # -------------------------------
@@ -84,14 +87,14 @@ class LiquidityModule:
         # -------------------------------
         # 9. LLM Narrative + Insights
         # -------------------------------
-        #print("Generating liquidity narrative via LLM...")
+        # print("Generating liquidity narrative via LLM...")
         narrative, trend_insights = generate_liquidity_narrative(
             company_id=input_data.company_id,
             key_metrics=key_metrics,
             rule_results=rule_results,
             trend_data=trend_summary,
         )
-        #print(f"Generated liquidity narrative. \nNarrative Sections: {len(narrative)}")
+        # print(f"Generated liquidity narrative. \nNarrative Sections: {len(narrative)}")
 
         # populate insights (LLM or fallback)
         for metric_name, block in trend_summary.items():
@@ -150,11 +153,13 @@ class LiquidityModule:
         for r in rule_results:
             if r.flag == "RED":
                 red_flags.append({
+                    "module": "liquidity",
                     "severity": "CRITICAL",
                     "title": r.rule_name,
-                    "detail": r.reason
+                    "detail": r.reason,
+                    "risk_category": "liquidity",
                 })
-  
+
             elif r.flag == "GREEN":
                 positives.append(f"{r.rule_name}: {r.reason}")
 
@@ -195,7 +200,7 @@ class LiquidityModule:
         }
         """
         metrics = ["cash_and_equivalents", "receivables", "inventory",
-                   "operating_cash_flow", "current_liabilities","current_ratio"]
+                   "operating_cash_flow", "current_liabilities", "current_ratio"]
 
         trend_summary = {}
 
@@ -213,7 +218,6 @@ class LiquidityModule:
                 else:
                     values[label] = getattr(fin, metric, None)
 
-
             # Compute YoY pct directly from the values (Y vs Y-1, Y-1 vs Y-2, ...)
             yoy_pct = {}
             for i in range(0, len(labels) - 1):
@@ -226,7 +230,8 @@ class LiquidityModule:
                 if curr_val is None or prev_val in (None, 0):
                     yoy_pct[key] = None
                 else:
-                    yoy_pct[key] = round(((curr_val - prev_val) / prev_val) * 100, 2)
+                    yoy_pct[key] = round(
+                        ((curr_val - prev_val) / prev_val) * 100, 2)
 
             trend_summary[metric] = {
                 "values": values,
@@ -235,35 +240,40 @@ class LiquidityModule:
             }
 
         return trend_summary
-    
+
 
 def build_financial_list(req) -> List[LiquidityYearFinancials]:
     """
     Build a list of LiquidityYearFinancials from request data.
     """
     fin_list = []
-        
+
     for fy in req["financial_data"]["financial_years"]:
         # Calculate current_assets if not provided
         inventory = fy["inventories"]
         cash_equivalents = fy["cash_equivalents"]
-        total_debt = fy["short_term_debt"] + fy["long_term_debt"] + fy["lease_liabilities"] + fy["other_borrowings"] + fy["preference_capital"]
-        #print(f"Processing Year: {fy['year']} : {fy['short_term_debt']} + {fy['other_liability_items']} + {fy['long_term_debt']} + {fy['lease_liabilities']} + {fy['other_borrowings']} + {fy['preference_capital']}")
-        #print("Total Debt Calculated:", total_debt)
-        current_assets = fy["investments"] + fy["inventories"] + fy["trade_receivables"]
-        current_liablities = fy["short_term_debt"] + fy["other_liability_items"]
-        operating_cash_flow = fy["profit_from_operations"] + fy["working_capital_changes"] - fy["direct_taxes"]
+        total_debt = fy["short_term_debt"] + fy["long_term_debt"] + \
+            fy["lease_liabilities"] + fy["other_borrowings"] + \
+            fy["preference_capital"]
+        # print(f"Processing Year: {fy['year']} : {fy['short_term_debt']} + {fy['other_liability_items']} + {fy['long_term_debt']} + {fy['lease_liabilities']} + {fy['other_borrowings']} + {fy['preference_capital']}")
+        # print("Total Debt Calculated:", total_debt)
+        current_assets = fy["investments"] + \
+            fy["inventories"] + fy["trade_receivables"]
+        current_liablities = fy["short_term_debt"] + \
+            fy["other_liability_items"]
+        operating_cash_flow = fy["profit_from_operations"] + \
+            fy["working_capital_changes"] - fy["direct_taxes"]
         daily_expenses = (fy["expenses"] - fy["depreciation"]) / 365
         marketable_securities = fy["investments"]
         receivables = fy["trade_receivables"]
         fin_list.append(
             LiquidityYearFinancials(
                 **{**fy, "inventory": inventory, "cash_and_equivalents": cash_equivalents,
-                    "current_assets": current_assets, "current_liabilities": current_liablities, 
-                    "operating_cash_flow": operating_cash_flow, "daily_operating_expenses": daily_expenses, 
+                    "current_assets": current_assets, "current_liabilities": current_liablities,
+                    "operating_cash_flow": operating_cash_flow, "daily_operating_expenses": daily_expenses,
                     "total_debt": total_debt, "marketable_securities": marketable_securities,
                     "receivables": receivables, "interest_expense": fy["interest_paid_fin"]}
             )
         )
-    
+
     return fin_list

@@ -7,7 +7,8 @@ from .risk_models import YearFinancials
 from .risk_metrics import compute_derived_metrics
 from .risk_rules import RiskRulesEngine
 from .risk_insight_fallback import generate_fallback_narrative
-from .risk_config import DEFAULT_THRESHOLDS , manual_vals
+from .risk_config import DEFAULT_THRESHOLDS, manual_vals
+
 
 class RiskOrchestrator:
     def __init__(self, llm_client=None):
@@ -15,7 +16,8 @@ class RiskOrchestrator:
 
     async def run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            years_raw = payload.get("financial_data", {}).get("financial_years", [])
+            years_raw = payload.get("financial_data", {}).get(
+                "financial_years", [])
             fin_objs: List[YearFinancials] = []
             for idx, y in enumerate(years_raw):
                 y["related_party_sales"] = manual_vals["related_party_sales"][idx]
@@ -23,8 +25,7 @@ class RiskOrchestrator:
                 y["ebit"] = y.get("operating_profit")
                 y["net_debt"] = y.get("borrowings")
                 fin_objs.append(YearFinancials(**y))
-            print("Input financial data with manual RPT values:", fin_objs)
-            
+
         except Exception as e:
             return {"error": "input_validation_failed", "details": str(e)}
 
@@ -32,13 +33,12 @@ class RiskOrchestrator:
         fin_objs = [YearFinancials(**d) for d in derived]
         print("Derived financial data:", fin_objs)
 
-        thresholds = {**DEFAULT_THRESHOLDS, **(payload.get("scenario_thresholds") or {})}
+        thresholds = {**DEFAULT_THRESHOLDS, **
+                      (payload.get("scenario_thresholds") or {})}
 
         engine = RiskRulesEngine(thresholds)
         rules_results = engine.evaluate(fin_objs)
         rules_serialized = [r.dict() for r in rules_results]
-
-
 
         # Key metrics
         last = derived[-1]
@@ -89,21 +89,27 @@ class RiskOrchestrator:
         # Red flags / Positive
         red_flags = []
         positive_points = []
-        severity_rank = {"GREEN": 0, "YELLOW": 1, "HIGH": 2, "RED": 3, "CRITICAL": 4}
+        severity_rank = {"GREEN": 0, "YELLOW": 1,
+                         "HIGH": 2, "RED": 3, "CRITICAL": 4}
 
         for r in rules_serialized:
             f = r.get("flag")
             if f in ("CRITICAL", "RED", "HIGH"):
                 red_flags.append({
-                    "severity": "CRITICAL" if f in ("CRITICAL", "RED") else "HIGH",
+                    "module": "risk_scenario_detection",
+                    "severity": "CRITICAL" if f in ("CRITICAL", "RED") else "RED",
                     "title": r.get("rule_name"),
-                    "detail": r.get("reason") or r.get("pattern_detected")
+                    "detail": r.get("reason") or r.get("pattern_detected"),
+                    "risk_category": "governance_fraud",
                 })
             else:
-                positive_points.append(f"{r.get('rule_name')}: {r.get('reason')}")
+                positive_points.append(
+                    f"{r.get('rule_name')}: {r.get('reason')}")
 
-        total = sum(severity_rank.get(r.get("flag"), 0) for r in rules_serialized)
-        max_possible = max(1, len(rules_serialized) * max(severity_rank.values()))
+        total = sum(severity_rank.get(r.get("flag"), 0)
+                    for r in rules_serialized)
+        max_possible = max(1, len(rules_serialized) *
+                           max(severity_rank.values()))
         scenario_score = int(round(total / max_possible * 100))
 
         summary_color = "RED" if scenario_score >= 70 else "YELLOW" if scenario_score >= 40 else "GREEN"

@@ -30,9 +30,11 @@ class BorrowingsModule:
         summary_color = self._score_to_color(base_score)
 
         red_flags, positives = self._summarize(rule_results)
-        key_metrics = self._extract_key_metrics(per_year_metrics, trend_metrics)
+        key_metrics = self._extract_key_metrics(
+            per_year_metrics, trend_metrics)
         trend_summary = self._build_trend_summary(per_year_metrics)
-        deterministic_notes = self._build_narrative_notes(key_metrics, trend_metrics, red_flags)
+        deterministic_notes = self._build_narrative_notes(
+            key_metrics, trend_metrics, red_flags)
 
         # Generate narrative and insights
         base_score = self._compute_score(rule_results)
@@ -93,12 +95,15 @@ class BorrowingsModule:
         positives = []
         for rule in rule_results:
             if rule.flag == "RED":
-                severity = "CRITICAL" if rule.rule_id in {"B1", "B2", "C1", "F2"} else "HIGH"
+                severity = "CRITICAL" if rule.rule_id in {
+                    "B1", "B2", "C1", "F2"} else "RED"
                 red_flags.append(
                     {
+                        "module": "borrowings",
                         "severity": severity,
                         "title": rule.rule_name,
                         "detail": rule.reason,
+                        "risk_category": "leverage",
                     }
                 )
             elif rule.flag == "GREEN":
@@ -136,15 +141,20 @@ class BorrowingsModule:
                 f"Total debt CAGR {key_metrics['debt_cagr']:.1f}% vs EBITDA CAGR {key_metrics['ebitda_cagr']:.1f}%."
             )
         if key_metrics.get("debt_to_ebitda"):
-            notes.append(f"Debt/EBITDA at {key_metrics['debt_to_ebitda']:.1f}x.")
+            notes.append(
+                f"Debt/EBITDA at {key_metrics['debt_to_ebitda']:.1f}x.")
         if key_metrics.get("interest_coverage"):
-            notes.append(f"Interest coverage at {key_metrics['interest_coverage']:.1f}x.")
+            notes.append(
+                f"Interest coverage at {key_metrics['interest_coverage']:.1f}x.")
         if key_metrics.get("debt_lt_1y_pct"):
-            notes.append(f"{key_metrics['debt_lt_1y_pct']*100:.0f}% of debt matures within one year.")
+            notes.append(
+                f"{key_metrics['debt_lt_1y_pct']*100:.0f}% of debt matures within one year.")
         if key_metrics.get("floating_share") is not None:
-            notes.append(f"Floating rate exposure at {key_metrics['floating_share']*100:.0f}%.")
+            notes.append(
+                f"Floating rate exposure at {key_metrics['floating_share']*100:.0f}%.")
         if red_flags:
-            notes.append(f"Key concerns: {', '.join(flag['title'] for flag in red_flags[:2])}.")
+            notes.append(
+                f"Key concerns: {', '.join(flag['title'] for flag in red_flags[:2])}.")
         return notes or ["Debt profile assessed based on latest financials."]
 
     @staticmethod
@@ -184,7 +194,8 @@ class BorrowingsModule:
                 if curr_val is None or prev_val in (None, 0):
                     yoy[key] = None
                 else:
-                    yoy[key] = round(((curr_val - prev_val) / prev_val) * 100, 2)
+                    yoy[key] = round(
+                        ((curr_val - prev_val) / prev_val) * 100, 2)
             return yoy
 
         trend_summary = {}
@@ -195,4 +206,3 @@ class BorrowingsModule:
                 "insight": None,  # Will be populated by LLM
             }
         return trend_summary
-
