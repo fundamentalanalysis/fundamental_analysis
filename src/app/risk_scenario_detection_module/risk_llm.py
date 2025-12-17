@@ -8,7 +8,7 @@ class RiskScenarioAgentLLM:
 
     async def interpret(self, rules_triggered, red_flags):
         print(rules_triggered)
-        text_rules = "\n".join([f"- {r["rule_name"]}: {r["reason"]}" for r in rules_triggered])
+        text_rules = "\n".join([f"- {r['rule_name']}: {r['reason']}" for r in rules_triggered])
 
         prompt = f"""
 You are the Risk Scenario Agent.
