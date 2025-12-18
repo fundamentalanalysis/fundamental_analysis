@@ -1,51 +1,53 @@
-# def generate_llm_narrative(company, rules, score):
-#     if not rules:
-#         return [f"{company} shows no structural risk patterns."], score
 
-#     narrative = [f"{r.rule_name}: {r.reason}" for r in rules]
-#     return narrative, score
+# def generate_llm_narrative(company, trends):
+#     narrative = []
+
+#     for section, metrics in trends.items():
+#         for name, block in metrics.items():
+#             if isinstance(block, dict):
+#                 insight = (
+#                     block.get("comparison", {}).get("insight")
+#                     or block.get("insight")
+#                 )
+#                 if insight:
+#                     narrative.append(f"{company}: {insight}")
+
+#     if not narrative:
+#         narrative.append(f"No material risk patterns detected for {company}.")
+
+#     return narrative
+
 
 def generate_llm_narrative(company, trends):
     narrative = []
 
-    # -------------------------------------------------
-    # ASSET STRIPPING NARRATIVE
-    # -------------------------------------------------
-    asset_cmp = trends.get("asset_stripping", {}) \
-                      .get("debt_vs_assets", {}) \
-                      .get("comparison", {})
-
-    if asset_cmp.get("rule_triggered"):
+    z = trends["zombie_company"]
+    if z["cfo_vs_interest"]["comparison"]["rule_triggered"]:
         narrative.append(
-            f"Asset stripping risk identified for {company}: net debt increased while "
-            f"fixed assets declined in multiple years ({asset_cmp.get('overlap_years')}). "
-            f"This indicates possible hollowing of the asset base."
-        )
-    else:
-        narrative.append(
-            f"For {company}, although debt has risen, fixed asset decline was limited "
-            f"to isolated years ({asset_cmp.get('assets_falling_years', [])}), "
-            f"indicating no sustained asset stripping pattern."
+            f"{company} shows signs of financial stress, with operating cash flows failing to cover interest obligations across multiple years."
         )
 
-    # -------------------------------------------------
-    # LOAN EVERGREENING NARRATIVE
-    # -------------------------------------------------
-    evergreen_cmp = trends.get("loan_evergreening", {}) \
-                          .get("debt_vs_ebitda", {}) \
-                          .get("comparison", {})
+    if z["debt_vs_profit"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "Rising leverage alongside weakening profitability indicates a developing debt spiral."
+        )
 
-    if evergreen_cmp.get("rule_triggered"):
+    if trends["loan_evergreening"]["loan_rollover"]["comparison"]["rule_triggered"]:
         narrative.append(
-            f"Loan evergreening risk detected for {company}: debt continued to rise while "
-            f"EBITDA stagnated or declined across multiple years "
-            f"({evergreen_cmp.get('overlap_years')}). "
-            f"This suggests reliance on refinancing rather than earnings-based servicing."
+            "The company appears reliant on loan refinancing rather than organic debt reduction."
         )
-    else:
+
+    if trends["circular_trading"]["sales_up_cfo_down"]["comparison"]["rule_triggered"]:
         narrative.append(
-            f"Debt growth at {company} was not accompanied by persistent EBITDA deterioration, "
-            f"reducing the likelihood of loan evergreening."
+            "Revenue quality concerns are evident, as sales growth is not supported by operating cash flows."
         )
+
+    if trends["circular_trading"]["receivables_vs_revenue"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "Receivables expansion ahead of revenue growth suggests aggressive revenue recognition."
+        )
+
+    if not narrative:
+        narrative.append(f"No material financial risk patterns detected for {company}.")
 
     return narrative

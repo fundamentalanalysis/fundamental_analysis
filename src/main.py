@@ -202,27 +202,28 @@ async def analyze_risk_scenario(req: Request):
         req_data = await req.json()
 
         financial_years = [
-            YearRiskFinancialInput(
-                year=fy["year"],
-                revenue=fy["revenue"],
-                operating_profit=fy["operating_profit"],
-                interest=fy["interest"],
-                net_profit=fy["net_profit"],
-                other_income=fy.get("other_income", 0.0),
-                depreciation=fy.get("depreciation", 0.0),
+                YearRiskFinancialInput(
+            year=fy["year"],
+            revenue=fy["revenue"],
+            operating_profit=fy["operating_profit"],
+            interest=fy["interest"],
+            net_profit=fy["net_profit"],
+            other_income=fy.get("other_income", 0.0),
+            depreciation=fy.get("depreciation", 0.0),  # ✅ ADD THIS
 
-                borrowings=fy["borrowings"],
-                lease_liabilities=fy.get("lease_liabilities", 0.0),
-                fixed_assets=fy["fixed_assets"],
-                total_assets=fy["total_assets"],
-                trade_receivables=fy["trade_receivables"],
-                cash_equivalents=fy["cash_equivalents"],
+            borrowings=fy["borrowings"],
+            lease_liabilities=fy.get("lease_liabilities", 0.0),
+            fixed_assets=fy["fixed_assets"],
+            total_assets=fy["total_assets"],
+            trade_receivables=fy["trade_receivables"],
+            cash_equivalents=fy["cash_equivalents"],
 
-                cash_from_operating_activity=fy["cash_from_operating_activity"],
-                dividends_paid=fy.get("dividends_paid", 0.0),
-                proceeds_from_borrowings=fy.get("proceeds_from_borrowings", 0.0),
-                repayment_of_borrowings=fy.get("repayment_of_borrowings", 0.0),
-            )
+            cash_from_operating_activity=fy["cash_from_operating_activity"],
+            dividends_paid=fy.get("dividends_paid", 0.0),
+            proceeds_from_borrowings=fy.get("proceeds_from_borrowings", 0.0),
+            repayment_of_borrowings=fy.get("repayment_of_borrowings", 0.0),
+        )
+
             for fy in req_data["financial_data"]["financial_years"]
         ]
 
