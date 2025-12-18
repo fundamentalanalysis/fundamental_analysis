@@ -1,43 +1,48 @@
-def compute_per_year_metrics(financials):
+
+def compute_per_year_metrics(financial_years):
+    """
+    Normalize all financial inputs into a per-year metrics dictionary.
+    """
+
     metrics = {}
 
-    for f in financials:
-        net_debt = f.borrowings + f.lease_liabilities - f.cash_equivalents
-        ebitda = f.operating_profit + f.depreciation
+    for fy in financial_years:
+        year = fy.year
 
-        metrics[f.year] = {
-            "year": f.year,
+        borrowings = fy.borrowings or 0
+        cash = fy.cash_equivalents or 0
 
+        metrics[year] = {
             # Profitability
-            "revenue": f.revenue,
-            "ebit": f.operating_profit,
-            "ebitda": ebitda,
-            "interest": f.interest,
-            "net_profit": f.net_profit,
-            "other_income": f.other_income,
+            "revenue": fy.revenue or 0,
+            "ebit": fy.operating_profit or 0,
+            "interest": fy.interest or 0,
+            "net_profit": fy.net_profit or 0,
+            "other_income": fy.other_income or 0,
+            "depreciation": fy.depreciation or 0,
+            "ebitda": (fy.operating_profit or 0) + (fy.depreciation or 0),
 
-            # Cash
-            "cash": f.cash_equivalents,
-            "cfo": f.cash_from_operating_activity,
+            # Cash flow
+            "cfo": fy.cash_from_operating_activity or 0,
+            "dividends_paid": fy.dividends_paid or 0,
 
-            # Assets
-            "fixed_assets": f.fixed_assets,
-            "receivables": f.trade_receivables,
+            # Balance sheet
+            "fixed_assets": fy.fixed_assets or 0,
+            "total_assets": fy.total_assets or 0,
+            "receivables": fy.trade_receivables or 0,
+            "cash": cash,
+            "net_debt": borrowings - cash,
 
-            # Debt
-            "borrowings": f.borrowings,
-            "short_term_debt": f.short_term_debt,
-            "net_debt": net_debt,
+            # Evergreening
+            "proceeds_from_borrowings": fy.proceeds_from_borrowings or 0,
+            "repayment_of_borrowings": abs(fy.repayment_of_borrowings or 0),
+            "interest_paid": abs(fy.interest_paid_fin or 0),
+            "interest_capitalized": fy.interest_capitalized or 0,
+            "short_term_debt": fy.short_term_debt or 0,
 
-            # Financing
-            "proceeds": f.proceeds_from_borrowings,
-            "repayment": abs(f.repayment_of_borrowings),
-            "interest_capitalized": f.interest_capitalized,
-
-            # RPT
-            "rpt_sales": f.related_party_sales,
-            "rpt_receivables": f.related_party_receivables,
+            # Related party
+            "rpt_sales": fy.related_party_sales or 0,
+            "rpt_receivables": fy.related_party_receivables or 0,
         }
 
     return metrics
-
