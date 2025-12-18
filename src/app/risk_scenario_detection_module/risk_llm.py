@@ -1,38 +1,51 @@
-from src.app.config import get_llm_client, OPENAI_MODEL
+# def generate_llm_narrative(company, rules, score):
+#     if not rules:
+#         return [f"{company} shows no structural risk patterns."], score
 
+#     narrative = [f"{r.rule_name}: {r.reason}" for r in rules]
+#     return narrative, score
 
-class RiskScenarioAgentLLM:
+def generate_llm_narrative(company, trends):
+    narrative = []
 
-    def __init__(self):
-        self.client = get_llm_client()
+    # -------------------------------------------------
+    # ASSET STRIPPING NARRATIVE
+    # -------------------------------------------------
+    asset_cmp = trends.get("asset_stripping", {}) \
+                      .get("debt_vs_assets", {}) \
+                      .get("comparison", {})
 
-    async def interpret(self, rules_triggered, red_flags):
-        print(rules_triggered)
-        text_rules = "\n".join([f"- {r['rule_name']}: {r['reason']}" for r in rules_triggered])
-
-        prompt = f"""
-You are the Risk Scenario Agent.
-Interpret the following risk scenario rule triggers:
-
-RULES:
-{text_rules}
-
-Other module red flags:
-{red_flags}
-
-Produce:
-1. Scenario classification
-2. Severity (Low / Moderate / High / Critical)
-3. A narrative explaining the interactions
-"""
-        print("before response")
-
-        response = self.client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+    if asset_cmp.get("rule_triggered"):
+        narrative.append(
+            f"Asset stripping risk identified for {company}: net debt increased while "
+            f"fixed assets declined in multiple years ({asset_cmp.get('overlap_years')}). "
+            f"This indicates possible hollowing of the asset base."
+        )
+    else:
+        narrative.append(
+            f"For {company}, although debt has risen, fixed asset decline was limited "
+            f"to isolated years ({asset_cmp.get('assets_falling_years', [])}), "
+            f"indicating no sustained asset stripping pattern."
         )
 
-        print("LLM response:", response)
+    # -------------------------------------------------
+    # LOAN EVERGREENING NARRATIVE
+    # -------------------------------------------------
+    evergreen_cmp = trends.get("loan_evergreening", {}) \
+                          .get("debt_vs_ebitda", {}) \
+                          .get("comparison", {})
 
-        return response.choices[0].message.content
+    if evergreen_cmp.get("rule_triggered"):
+        narrative.append(
+            f"Loan evergreening risk detected for {company}: debt continued to rise while "
+            f"EBITDA stagnated or declined across multiple years "
+            f"({evergreen_cmp.get('overlap_years')}). "
+            f"This suggests reliance on refinancing rather than earnings-based servicing."
+        )
+    else:
+        narrative.append(
+            f"Debt growth at {company} was not accompanied by persistent EBITDA deterioration, "
+            f"reducing the likelihood of loan evergreening."
+        )
+
+    return narrative
