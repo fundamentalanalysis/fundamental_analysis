@@ -1,42 +1,48 @@
-# risk_metrics.py
-from typing import Dict, Any, Optional
 
-
-def safe_float(v: Optional[float]) -> Optional[float]:
-    try:
-        return None if v is None else float(v)
-    except Exception:
-        return None
-
-
-def compute_derived_metrics(year: Dict[str, Any]) -> Dict[str, Any]:
+def compute_per_year_metrics(financial_years):
     """
-    Compute per-year derived metrics from the raw year dict (matches your input).
+    Normalize all financial inputs into a per-year metrics dictionary.
     """
-    out = dict(year)
 
-    # loan rollover: proceeds - repayment (if both exist)
-    proceeds = safe_float(year.get("proceeds_from_borrowings"))
-    repayment = safe_float(year.get("repayment_of_borrowings"))
-    if proceeds is not None and repayment is not None:
-        out["loan_rollover_amount"] = proceeds - repayment
+    metrics = {}
 
-    # interest capitalized
-    interest_paid_fin = safe_float(year.get("interest_paid_fin"))
-    interest = safe_float(year.get("interest"))
-    if interest_paid_fin is not None and interest is not None:
-        out["interest_capitalized"] = interest_paid_fin - interest
+    for fy in financial_years:
+        year = fy.year
 
-    # net_debt approximation (if missing)
-    if year.get("net_debt") is None:
-        borrowings = safe_float(year.get("borrowings") or 0)
+        borrowings = fy.borrowings or 0
+        cash = fy.cash_equivalents or 0
 
-        out["net_debt"] = borrowings
+        metrics[year] = {
+            # Profitability
+            "revenue": fy.revenue or 0,
+            "ebit": fy.operating_profit or 0,
+            "interest": fy.interest or 0,
+            "net_profit": fy.net_profit or 0,
+            "other_income": fy.other_income or 0,
+            "depreciation": fy.depreciation or 0,
+            "ebitda": (fy.operating_profit or 0) + (fy.depreciation or 0),
 
-    # canonical OCF
-    if out.get("operating_cash_flow") is None:
-        if year.get("cash_from_operating_activity") is not None:
-            out["operating_cash_flow"] = safe_float(year.get("cash_from_operating_activity"))
+            # Cash flow
+            "cfo": fy.cash_from_operating_activity or 0,
+            "dividends_paid": fy.dividends_paid or 0,
 
-    # rpt ratios placeholders (filled in trend module)
-    return out
+            # Balance sheet
+            "fixed_assets": fy.fixed_assets or 0,
+            "total_assets": fy.total_assets or 0,
+            "receivables": fy.trade_receivables or 0,
+            "cash": cash,
+            "net_debt": borrowings - cash,
+
+            # Evergreening
+            "proceeds_from_borrowings": fy.proceeds_from_borrowings or 0,
+            "repayment_of_borrowings": abs(fy.repayment_of_borrowings or 0),
+            "interest_paid": abs(fy.interest_paid_fin or 0),
+            "interest_capitalized": fy.interest_capitalized or 0,
+            "short_term_debt": fy.short_term_debt or 0,
+
+            # Related party
+            "rpt_sales": fy.related_party_sales or 0,
+            "rpt_receivables": fy.related_party_receivables or 0,
+        }
+
+    return metrics

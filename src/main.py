@@ -39,6 +39,18 @@ from fastapi import Request
 from src.app.request_model import AnalysisRequest
 from src.app.working_capital_module.wc_orchestrator import run_working_capital_module
 
+from src.app.risk_scenario_detection_module.risk_models import (
+    RiskScenarioInput,
+    YearRiskFinancialInput
+)
+from src.app.risk_scenario_detection_module.risk_orchestrator import (
+    RiskScenarioDetectionModule,
+    run_risk_scenario_detection_module
+)
+
+
+
+
 # Ensure package imports work when running `python src/main.py`
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -84,9 +96,9 @@ DEFAULT_BENCHMARKS = IndustryBenchmarks(
 # =============================================================
 # IMPORT RISK MODULE
 # =============================================================
-from src.app.risk_scenario_detection_module.risk_orchestrator import (
-    RiskOrchestrator,   
-)
+# from src.app.risk_scenario_detection_module.risk_orchestrator import (
+#     RiskOrchestrator,   
+# )
 
 
 # ---------------------------------------------------------
@@ -109,7 +121,7 @@ DEFAULT_COVENANTS = CovenantLimits(
 
 borrowings_engine = BorrowingsModule()
 asset_quality_engine = AssetIntangibleQualityModule()
-risk_engine = RiskOrchestrator()  
+risk_engine = RiskScenarioDetectionModule() 
 
 
 @app.post("/borrowings/analyze")
@@ -232,15 +244,27 @@ async def analyze_liquidity(req: AnalysisRequest):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
     
+# @app.post("/risk/analyze")
+# async def analyze_risk(req: AnalysisRequest):
+#     try:
+#         req_data = req.dict()
+#         result = await risk_engine.run(req_data)  # async call to RiskOrchestrator
+#         return result
+#     except Exception as e:
+#         return JSONResponse({"error": str(e)}, status_code=500)
+    
 @app.post("/risk/analyze")
-async def analyze_risk(req: AnalysisRequest):
+async def analyze_risk_scenario(req: AnalysisRequest):
     try:
         req_data = req.dict()
-        result = await risk_engine.run(req_data)  # async call to RiskOrchestrator
+        result = run_risk_scenario_detection_module(req_data)
+
         return result
+
+
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    
+
 
 
 # ---------- Equity Funding Mix API Request Schemas ----------

@@ -1,38 +1,53 @@
-from src.app.config import get_llm_client, OPENAI_MODEL
+
+# def generate_llm_narrative(company, trends):
+#     narrative = []
+
+#     for section, metrics in trends.items():
+#         for name, block in metrics.items():
+#             if isinstance(block, dict):
+#                 insight = (
+#                     block.get("comparison", {}).get("insight")
+#                     or block.get("insight")
+#                 )
+#                 if insight:
+#                     narrative.append(f"{company}: {insight}")
+
+#     if not narrative:
+#         narrative.append(f"No material risk patterns detected for {company}.")
+
+#     return narrative
 
 
-class RiskScenarioAgentLLM:
+def generate_llm_narrative(company, trends):
+    narrative = []
 
-    def __init__(self):
-        self.client = get_llm_client()
-
-    async def interpret(self, rules_triggered, red_flags):
-        print(rules_triggered)
-        text_rules = "\n".join([f"- {r['rule_name']}: {r['reason']}" for r in rules_triggered])
-
-        prompt = f"""
-You are the Risk Scenario Agent.
-Interpret the following risk scenario rule triggers:
-
-RULES:
-{text_rules}
-
-Other module red flags:
-{red_flags}
-
-Produce:
-1. Scenario classification
-2. Severity (Low / Moderate / High / Critical)
-3. A narrative explaining the interactions
-"""
-        print("before response")
-
-        response = self.client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+    z = trends["zombie_company"]
+    if z["cfo_vs_interest"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            f"{company} shows signs of financial stress, with operating cash flows failing to cover interest obligations across multiple years."
         )
 
-        print("LLM response:", response)
+    if z["debt_vs_profit"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "Rising leverage alongside weakening profitability indicates a developing debt spiral."
+        )
 
-        return response.choices[0].message.content
+    if trends["loan_evergreening"]["loan_rollover"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "The company appears reliant on loan refinancing rather than organic debt reduction."
+        )
+
+    if trends["circular_trading"]["sales_up_cfo_down"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "Revenue quality concerns are evident, as sales growth is not supported by operating cash flows."
+        )
+
+    if trends["circular_trading"]["receivables_vs_revenue"]["comparison"]["rule_triggered"]:
+        narrative.append(
+            "Receivables expansion ahead of revenue growth suggests aggressive revenue recognition."
+        )
+
+    if not narrative:
+        narrative.append(f"No material financial risk patterns detected for {company}.")
+
+    return narrative
