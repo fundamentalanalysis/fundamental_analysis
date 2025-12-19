@@ -1,110 +1,340 @@
-from typing import Dict, List, Optional, Union
+
+# # src/app/leverage_financial_risk_module/lfr_trends.py
+
+# def _build_values(per_year, key):
+#     """
+#     Build Y, Y-1, Y-2, Y-3, Y-4 series safely
+#     using canonical metric keys from per_year
+#     """
+
+#     years = sorted(per_year.keys(), reverse=True)
+#     labels = ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]
+
+#     values = {}
+
+#     for i, label in enumerate(labels):
+#         if i < len(years):
+#             year = years[i]
+#             values[label] = round(per_year[year].get(key, 0.0), 4)
+#         else:
+#             values[label] = 0.0
+
+#     return values
 
 
-# =========================================================
-# Helpers
-# =========================================================
+# def compute_leverage_trends(per_year):
+#     """
+#     Build leverage trends using CANONICAL metric keys
+#     """
 
-def safe_div(a, b) -> Optional[float]:
-    if a is None or b in (None, 0):
-        return None
-    return round(a / b, 4)
+#     return {
+#         "basic leverage metrics": {
+#             "debt_to_equity": {
+#                 "total_debt": {
+#                     "values": _build_values(per_year, "total_debt")
+#                 },
+#                 "equity": {
+#                     "values": _build_values(per_year, "equity")
+#                 },
+#                 "debt to equity": {
+#                     "values": _build_values(per_year, "de_ratio")
+#                 },
+#             },
+
+#             "debt_to_ebitda": {
+#                 "total_debt": {
+#                     "values": _build_values(per_year, "total_debt")
+#                 },
+#                 "ebitda": {
+#                     "values": _build_values(per_year, "ebitda")
+#                 },
+#                 "debt to ebitda": {
+#                     "values": _build_values(per_year, "debt_ebitda")
+#                 },
+#             },
+
+#             "interest_coverage": {
+#                 "ebit": {
+#                     "values": _build_values(per_year, "ebit")
+#                 },
+#                 # ✅ FIXED: canonical key
+#                 "interest_cost": {
+#                     "values": _build_values(per_year, "interest_cost")
+#                 },
+#                 "interest coverage ratio": {
+#                     "values": _build_values(per_year, "interest_coverage")
+#                 },
+#             },
+#         },
+
+#         "advanced fitch / s&p style metrics": {
+#             "net_debt": {
+#                 "total_debt": {
+#                     "values": _build_values(per_year, "total_debt")
+#                 },
+#                 "cash": {
+#                     "values": _build_values(per_year, "cash")
+#                 },
+#                 "net debt": {
+#                     "values": _build_values(per_year, "net_debt")
+#                 },
+#             },
+
+#             "net_debt_to_ebitda": {
+#                 "net_debt": {
+#                     "values": _build_values(per_year, "net_debt")
+#                 },
+#                 "ebitda": {
+#                     "values": _build_values(per_year, "ebitda")
+#                 },
+#                 "net debt to ebitda": {
+#                     "values": _build_values(per_year, "net_debt_ebitda")
+#                 },
+#             },
+
+#             "ffo_coverage": {
+#                 "ebitda": {
+#                     "values": _build_values(per_year, "ebitda")
+#                 },
+#                 # ✅ FIXED: canonical key
+#                 "interest_cost": {
+#                     "values": _build_values(per_year, "interest_cost")
+#                 },
+#                 # ✅ FIXED: canonical key
+#                 "taxes": {
+#                     "values": _build_values(per_year, "taxes")
+#                 },
+#                 "ffo": {
+#                     "values": _build_values(per_year, "ffo")
+#                 },
+#                 "ffo coverage": {
+#                     "values": _build_values(per_year, "ffo_coverage")
+#                 },
+#             },
+
+#             "debt_service_burden": {
+#                 "short_term_debt": {
+#                     "values": _build_values(per_year, "short_term_debt")
+#                 },
+#                 "total_debt": {
+#                     "values": _build_values(per_year, "total_debt")
+#                 },
+#                 "debt service burden": {
+#                     "values": _build_values(per_year, "st_debt_ratio")
+#                 },
+#             },
+#         },
+
+#         "short-term debt dependence": {
+#             "short_term_debt": {
+#                 "values": _build_values(per_year, "short_term_debt")
+#             },
+#             "total_debt": {
+#                 "values": _build_values(per_year, "total_debt")
+#             },
+#             "st debt share": {
+#                 "values": _build_values(per_year, "st_debt_ratio")
+#             },
+#         },
+#     }
 
 
-def build_year_map(values: List[Optional[float]]) -> Dict[str, Optional[float]]:
-    return {
-        "Y" if i == 0 else f"Y-{i}": v
-        for i, v in enumerate(reversed(values))
-    }
+# src/app/leverage_financial_risk_module/lfr_trends.py
+
+def _build_values(per_year, key):
+    """
+    Build Y, Y-1, Y-2, Y-3, Y-4 series safely
+    using canonical metric keys from per_year
+    """
+    years = sorted(per_year.keys(), reverse=True)
+    labels = ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]
+
+    values = {}
+
+    for i, label in enumerate(labels):
+        if i < len(years):
+            year = years[i]
+            values[label] = round(per_year[year].get(key, 0.0), 4)
+        else:
+            values[label] = 0.0
+
+    return values
 
 
-def normalize_metrics(per_year_metrics: Union[Dict[int, dict], List[dict]]) -> Dict[int, dict]:
-    if isinstance(per_year_metrics, dict):
-        return per_year_metrics
-    if isinstance(per_year_metrics, list):
-        return {m["year"]: m for m in per_year_metrics}
-    raise TypeError("per_year_metrics must be dict or list")
+def _generate_trend_insight(values: dict, metric_name: str) -> str:
+    """
+    Deterministic insight based on first vs last value
+    """
+    series = list(values.values())
+
+    latest = series[0]
+    oldest = series[-1]
+
+    if latest < oldest:
+        return f"{metric_name} has improved over the past five years, indicating strengthening financial profile."
+    elif latest > oldest:
+        return f"{metric_name} has increased over the past five years, indicating rising leverage or risk."
+    else:
+        return f"{metric_name} has remained broadly stable over the period."
 
 
-# =========================================================
-# PUBLIC API — TREND ENGINE
-# =========================================================
+def compute_leverage_trends(per_year):
+    """
+    Build leverage trends using CANONICAL metric keys
+    and attach deterministic insights
+    """
 
-def compute_trend_output(per_year_metrics: Union[Dict[int, dict], List[dict]]) -> Dict[str, dict]:
+    # -----------------------------
+    # BASIC METRICS
+    # -----------------------------
+    de_ratio = _build_values(per_year, "de_ratio")
+    debt_ebitda = _build_values(per_year, "debt_ebitda")
+    interest_cov = _build_values(per_year, "interest_coverage")
 
-    per_year_metrics = normalize_metrics(per_year_metrics)
-    years = sorted(per_year_metrics.keys())
-
-    total_debt = [per_year_metrics[y]["total_debt"] for y in years]
-    short_term_debt = [per_year_metrics[y]["short_term_debt"] for y in years]
-    cash = [per_year_metrics[y]["cash"] for y in years]
-    equity = [per_year_metrics[y]["equity"] for y in years]
-
-    ebit = [per_year_metrics[y]["ebit"] for y in years]
-    ebitda = [per_year_metrics[y]["ebitda"] for y in years]
-    interest_cost = [per_year_metrics[y]["interest_cost"] for y in years]
-    taxes = [per_year_metrics[y]["tax_amount"] for y in years]
-
-    net_debt = [d - c for d, c in zip(total_debt, cash)]
-
-    debt_to_equity = [safe_div(d, e) for d, e in zip(total_debt, equity)]
-    debt_to_ebitda = [safe_div(d, e) for d, e in zip(total_debt, ebitda)]
-    interest_coverage = [safe_div(e, i) for e, i in zip(ebit, interest_cost)]
-
-    ffo = [
-        ebitda[i] - interest_cost[i] - taxes[i]
-        for i in range(len(years))
-    ]
-
-    ffo_coverage = [safe_div(f, i) for f, i in zip(ffo, interest_cost)]
-    net_debt_to_ebitda = [safe_div(nd, e) for nd, e in zip(net_debt, ebitda)]
-    st_debt_share = [safe_div(st, td) for st, td in zip(short_term_debt, total_debt)]
+    # -----------------------------
+    # ADVANCED METRICS
+    # -----------------------------
+    net_debt = _build_values(per_year, "net_debt")
+    net_debt_ebitda = _build_values(per_year, "net_debt_ebitda")
+    ffo_cov = _build_values(per_year, "ffo_coverage")
+    st_ratio = _build_values(per_year, "st_debt_ratio")
 
     return {
         "basic leverage metrics": {
             "debt_to_equity": {
-                "total_debt": {"values": build_year_map(total_debt)},
-                "equity": {"values": build_year_map(equity)},
-                "debt to equity": {"values": build_year_map(debt_to_equity)},
+                "total_debt": {
+                    "values": _build_values(per_year, "total_debt")
+                },
+                "equity": {
+                    "values": _build_values(per_year, "equity")
+                },
+                "debt to equity": {
+                    "values": de_ratio
+                },
+                "insight": _generate_trend_insight(
+                    de_ratio,
+                    "Debt-to-Equity"
+                ),
             },
+
             "debt_to_ebitda": {
-                "total_debt": {"values": build_year_map(total_debt)},
-                "ebitda": {"values": build_year_map(ebitda)},
-                "debt to ebitda": {"values": build_year_map(debt_to_ebitda)},
+                "total_debt": {
+                    "values": _build_values(per_year, "total_debt")
+                },
+                "ebitda": {
+                    "values": _build_values(per_year, "ebitda")
+                },
+                "debt to ebitda": {
+                    "values": debt_ebitda
+                },
+                "insight": _generate_trend_insight(
+                    debt_ebitda,
+                    "Debt-to-EBITDA"
+                ),
             },
+
             "interest_coverage": {
-                "ebit": {"values": build_year_map(ebit)},
-                "interest_cost": {"values": build_year_map(interest_cost)},
-                "interest coverage ratio": {"values": build_year_map(interest_coverage)},
+                "ebit": {
+                    "values": _build_values(per_year, "ebit")
+                },
+                "interest_cost": {
+                    "values": _build_values(per_year, "interest_cost")
+                },
+                "interest coverage ratio": {
+                    "values": interest_cov
+                },
+                "insight": _generate_trend_insight(
+                    interest_cov,
+                    "Interest Coverage"
+                ),
             },
         },
+
         "advanced fitch / s&p style metrics": {
             "net_debt": {
-                "total_debt": {"values": build_year_map(total_debt)},
-                "cash": {"values": build_year_map(cash)},
-                "net debt": {"values": build_year_map(net_debt)},
+                "total_debt": {
+                    "values": _build_values(per_year, "total_debt")
+                },
+                "cash": {
+                    "values": _build_values(per_year, "cash")
+                },
+                "net debt": {
+                    "values": net_debt
+                },
+                "insight": _generate_trend_insight(
+                    net_debt,
+                    "Net Debt"
+                ),
             },
+
             "net_debt_to_ebitda": {
-                "net_debt": {"values": build_year_map(net_debt)},
-                "ebitda": {"values": build_year_map(ebitda)},
-                "net debt to ebitda": {"values": build_year_map(net_debt_to_ebitda)},
+                "net_debt": {
+                    "values": _build_values(per_year, "net_debt")
+                },
+                "ebitda": {
+                    "values": _build_values(per_year, "ebitda")
+                },
+                "net debt to ebitda": {
+                    "values": net_debt_ebitda
+                },
+                "insight": _generate_trend_insight(
+                    net_debt_ebitda,
+                    "Net Debt-to-EBITDA"
+                ),
             },
+
             "ffo_coverage": {
-                "ebitda": {"values": build_year_map(ebitda)},
-                "interest_cost": {"values": build_year_map(interest_cost)},
-                "taxes": {"values": build_year_map(taxes)},
-                "ffo": {"values": build_year_map(ffo)},
-                "ffo coverage": {"values": build_year_map(ffo_coverage)},
+                "ebitda": {
+                    "values": _build_values(per_year, "ebitda")
+                },
+                "interest_cost": {
+                    "values": _build_values(per_year, "interest_cost")
+                },
+                "taxes": {
+                    "values": _build_values(per_year, "taxes")
+                },
+                "ffo": {
+                    "values": _build_values(per_year, "ffo")
+                },
+                "ffo coverage": {
+                    "values": ffo_cov
+                },
+                "insight": _generate_trend_insight(
+                    ffo_cov,
+                    "FFO Coverage"
+                ),
             },
+
             "debt_service_burden": {
-                "short_term_debt": {"values": build_year_map(short_term_debt)},
-                "total_debt": {"values": build_year_map(total_debt)},
-                "debt service burden": {"values": build_year_map(st_debt_share)},
+                "short_term_debt": {
+                    "values": _build_values(per_year, "short_term_debt")
+                },
+                "total_debt": {
+                    "values": _build_values(per_year, "total_debt")
+                },
+                "debt service burden": {
+                    "values": st_ratio
+                },
+                "insight": _generate_trend_insight(
+                    st_ratio,
+                    "Debt Service Burden"
+                ),
             },
         },
+
         "short-term debt dependence": {
-            "short_term_debt": {"values": build_year_map(short_term_debt)},
-            "total_debt": {"values": build_year_map(total_debt)},
-            "st debt share": {"values": build_year_map(st_debt_share)},
+            "short_term_debt": {
+                "values": _build_values(per_year, "short_term_debt")
+            },
+            "total_debt": {
+                "values": _build_values(per_year, "total_debt")
+            },
+            "st debt share": {
+                "values": st_ratio
+            },
+            "insight": _generate_trend_insight(
+                st_ratio,
+                "Short-Term Debt Dependence"
+            ),
         },
     }

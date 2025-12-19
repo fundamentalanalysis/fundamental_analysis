@@ -1,131 +1,88 @@
-from typing import Dict, Any, Optional
+# src/app/leverage_financial_risk_module/lfr_metrics.py
 
-
-# ============================================================
-# Helpers
-# ============================================================
-
-def safe_div(a, b) -> Optional[float]:
-    if a is None or b in (None, 0):
-        return None
-    return round(a / b, 4)
-
-
-def parse_tax_percent(tax) -> float:
-    if tax is None:
+def _parse_tax_rate(tax_str):
+    """
+    Convert '19%' → 0.19
+    """
+    if not tax_str:
         return 0.0
-    if isinstance(tax, str):
-        return float(tax.replace("%", "").strip())
-    return float(tax)
+    if isinstance(tax_str, str) and "%" in tax_str:
+        return float(tax_str.replace("%", "").strip()) / 100
+    return 0.0
 
 
-# ============================================================
-# PUBLIC API — METRICS ENGINE
-# ============================================================
-
-def compute_per_year_metrics(input_data: Dict[str, Any]) -> Dict[int, dict]:
+def compute_per_year_metrics(financials):
     """
-    Deterministic leverage + FFO metrics per year.
-    IMPORT-SAFE. SPAWN-SAFE.
+    Compute leverage metrics per year using correct tax & FFO logic
     """
 
-    financial_years = input_data["financial_data"]["financial_years"]
-    metrics: Dict[int, dict] = {}
+    per_year = {}
 
-    for f in sorted(financial_years, key=lambda x: x["year"]):
-        year = f["year"]
-
-        # -----------------------------
-        # DEBT
-        # -----------------------------
-        short_term_debt = float(f.get("short_term_debt", 0))
-        long_term_debt = float(f.get("long_term_debt", 0))
-        lease_liabilities = float(f.get("lease_liabilities", 0))
-        other_borrowings = float(f.get("other_borrowings", 0))
-        cash = float(f.get("cash_equivalents", 0))
-
-        total_debt = (
-            short_term_debt
-            + long_term_debt
-            + lease_liabilities
-            + other_borrowings
-        )
+    for fy in financials:
+        year = fy.year
 
         # -----------------------------
-        # EQUITY (schema-safe)
+        # Base Inputs
         # -----------------------------
-        equity_capital = f.get("equity_capital") or f.get("total_equity")
-        reserves = f.get("reserves")
+        total_debt = fy.borrowings
+        short_term_debt = fy.short_term_debt
+        cash = fy.cash_equivalents
 
-        if equity_capital is None or reserves is None:
-            raise ValueError(f"[LFR_METRICS] Equity missing for year {year}")
-
-        equity_capital = float(equity_capital)
-        reserves = float(reserves)
-        equity = equity_capital + reserves
-
-        # -----------------------------
-        # PROFITABILITY
-        # -----------------------------
-        ebit = float(f["operating_profit"])
-        depreciation = float(f["depreciation"])
-        interest_cost = float(f["interest"])
-
+        equity = fy.equity
+        ebit = fy.operating_profit
+        depreciation = fy.depreciation
         ebitda = ebit + depreciation
+        interest_cost = fy.interest
+
+        profit_before_tax = getattr(fy, "profit_before_tax", 0.0)
+        tax_rate = _parse_tax_rate(getattr(fy, "tax", None))
 
         # -----------------------------
-        # PROFIT BEFORE TAX (STRICT)
+        # Correct Tax Calculation ✅
         # -----------------------------
-        if f.get("profit_before_tax") is not None:
-            profit_before_tax = float(f["profit_before_tax"])
-        else:
-            profit_before_tax = ebit - interest_cost
+        tax_amount = round(profit_before_tax * tax_rate, 2)
 
         # -----------------------------
-        # TAX (CORRECT)
-        # -----------------------------
-        tax_percent = parse_tax_percent(f.get("tax"))
-        tax_amount = profit_before_tax * tax_percent / 100
-
-        # -----------------------------
-        # NET DEBT & FFO
+        # Derived Metrics
         # -----------------------------
         net_debt = total_debt - cash
+
+        # FFO (Fitch / S&P definition)
         ffo = ebitda - interest_cost - tax_amount
 
+        de_ratio = total_debt / equity if equity else 0.0
+        debt_ebitda = total_debt / ebitda if ebitda else 0.0
+        net_debt_ebitda = net_debt / ebitda if ebitda else 0.0
+        interest_coverage = ebit / interest_cost if interest_cost else 0.0
+        st_debt_ratio = short_term_debt / total_debt if total_debt else 0.0
+        ffo_coverage = ffo / interest_cost if interest_cost else 0.0
+
         # -----------------------------
-        # OUTPUT
+        # Store Canonical Metrics ✅
+        # (KEY NAMES MATTER)
         # -----------------------------
-        metrics[year] = {
+        per_year[year] = {
             "year": year,
 
+            # Absolute values
             "total_debt": round(total_debt, 2),
-            "short_term_debt": short_term_debt,
-            "long_term_debt": long_term_debt,
-            "lease_liabilities": lease_liabilities,
-            "other_borrowings": other_borrowings,
-            "cash": cash,
-
-            "equity_capital": equity_capital,
-            "reserves": reserves,
+            "short_term_debt": round(short_term_debt, 2),
+            "cash": round(cash, 2),
             "equity": round(equity, 2),
-
-            "ebit": ebit,
+            "ebit": round(ebit, 2),
             "ebitda": round(ebitda, 2),
-            "interest_cost": interest_cost,
-            "profit_before_tax": round(profit_before_tax, 2),
-
-            "tax_percent": tax_percent,
-            "tax_amount": round(tax_amount, 2),
-
+            "interest_cost": round(interest_cost, 2),   # ✅ FIXED
+            "taxes": tax_amount,                          # ✅ FIXED
             "net_debt": round(net_debt, 2),
             "ffo": round(ffo, 2),
 
-            "de_ratio": safe_div(total_debt, equity),
-            "debt_ebitda": safe_div(total_debt, ebitda),
-            "net_debt_ebitda": safe_div(net_debt, ebitda),
-            "ffo_coverage": safe_div(ffo, interest_cost),
-            "st_debt_ratio": safe_div(short_term_debt, total_debt),
+            # Ratios
+            "de_ratio": round(de_ratio, 6),
+            "debt_ebitda": round(debt_ebitda, 6),
+            "net_debt_ebitda": round(net_debt_ebitda, 6),
+            "interest_coverage": round(interest_coverage, 6),
+            "st_debt_ratio": round(st_debt_ratio, 6),
+            "ffo_coverage": round(ffo_coverage, 6),
         }
 
-    return metrics
+    return per_year
