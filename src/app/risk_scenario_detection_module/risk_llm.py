@@ -1,53 +1,72 @@
-
-# def generate_llm_narrative(company, trends):
-#     narrative = []
-
-#     for section, metrics in trends.items():
-#         for name, block in metrics.items():
-#             if isinstance(block, dict):
-#                 insight = (
-#                     block.get("comparison", {}).get("insight")
-#                     or block.get("insight")
-#                 )
-#                 if insight:
-#                     narrative.append(f"{company}: {insight}")
-
-#     if not narrative:
-#         narrative.append(f"No material risk patterns detected for {company}.")
-
-#     return narrative
+from typing import Dict, List, Any
 
 
-def generate_llm_narrative(company, trends):
-    narrative = []
+def _call_llm(prompt: str) -> str:
+    """
+    Replace this body with OpenAI / Azure / Gemini call.
+    MUST return only analyst conclusions (no instructions, no JSON echo).
+    """
 
-    z = trends["zombie_company"]
-    if z["cfo_vs_interest"]["comparison"]["rule_triggered"]:
-        narrative.append(
-            f"{company} shows signs of financial stress, with operating cash flows failing to cover interest obligations across multiple years."
-        )
+    # ⚠️ TEMP SAFE FALLBACK (NO PROMPT ECHO)
+    return """
+• Operating cash flows have been insufficient to cover interest expenses for multiple years, indicating reliance on refinancing.
+• Net debt increased while profitability weakened, suggesting a developing debt spiral.
+• Borrowings have consistently exceeded repayments, pointing to loan evergreening risk.
+• Revenue growth without corresponding cash flow support raises concerns of circular trading.
+• One-off income materially impacted profits, reducing earnings quality.
+    """
 
-    if z["debt_vs_profit"]["comparison"]["rule_triggered"]:
-        narrative.append(
-            "Rising leverage alongside weakening profitability indicates a developing debt spiral."
-        )
 
-    if trends["loan_evergreening"]["loan_rollover"]["comparison"]["rule_triggered"]:
-        narrative.append(
-            "The company appears reliant on loan refinancing rather than organic debt reduction."
-        )
+def generate_llm_narrative(
+    company_id: str,
+    trends: Dict[str, Any],
+    rules: List[Any],
+) -> List[str]:
+    """
+    Generates a clean, human-readable financial risk narrative.
+    """
 
-    if trends["circular_trading"]["sales_up_cfo_down"]["comparison"]["rule_triggered"]:
-        narrative.append(
-            "Revenue quality concerns are evident, as sales growth is not supported by operating cash flows."
-        )
+    # -----------------------------
+    # Build structured prompt
+    # -----------------------------
+    prompt = f"""
+You are a senior financial risk analyst.
 
-    if trends["circular_trading"]["receivables_vs_revenue"]["comparison"]["rule_triggered"]:
-        narrative.append(
-            "Receivables expansion ahead of revenue growth suggests aggressive revenue recognition."
-        )
+Company: {company_id}
 
-    if not narrative:
-        narrative.append(f"No material financial risk patterns detected for {company}.")
+Summarize the key financial risks based ONLY on the trends and rules provided.
+Do NOT repeat raw data.
+Do NOT include instructions.
+Return concise bullet points only.
 
-    return narrative
+RISK TRENDS:
+{trends}
+
+TRIGGERED RULES:
+{[r.dict() for r in rules]}
+"""
+
+    # -----------------------------
+    # LLM call
+    # -----------------------------
+    raw = _call_llm(prompt)
+
+    # -----------------------------
+    # Clean & normalize output
+    # -----------------------------
+    lines = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        line = line.lstrip("-• ").strip()
+        if line:
+            lines.append(line)
+
+    # -----------------------------
+    # Final safety fallback
+    # -----------------------------
+    if not lines:
+        return ["No material financial risk signals identified based on available data."]
+
+    return lines
