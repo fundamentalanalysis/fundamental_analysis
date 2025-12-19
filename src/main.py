@@ -52,6 +52,22 @@ from src.app.liquidity_module.liquidity_orchestrator import (
     build_financial_list,  # Add this import
 )
 
+# =============================================================
+# IMPORT LEVERAGE & FINANCIAL RISK MODULE
+# =============================================================
+from src.app.leverage_financial_risk_module.lfr_models import (
+    LeverageFinancialRiskInput,
+    LeverageFinancialBenchmarks,
+)
+from src.app.leverage_financial_risk_module.lfr_orchestrator import (
+    run_leverage_financial_risk_module,
+)
+from src.app.config import DEFAULT_LEVERAGE_FINANCIAL_RULES
+DEFAULT_LEVERAGE_BENCHMARKS = LeverageFinancialBenchmarks(
+    **DEFAULT_LEVERAGE_FINANCIAL_RULES
+)
+
+
 # ---------------------------------------------------------
 # FASTAPI APP
 # ---------------------------------------------------------
@@ -142,6 +158,27 @@ async def analyze(req: AnalysisRequest):
         return result
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+    
+    
+    
+@app.post("/leverage_financial_risk/analyze")
+async def analyze_leverage_financial_risk(req: AnalysisRequest):
+    try:
+        req_data = req.dict()
+        print("Input to LFR Module:", req_data)
+
+        # Inject benchmarks if not present
+        req_data["benchmarks"] = DEFAULT_LEVERAGE_BENCHMARKS.dict()
+
+        result = run_leverage_financial_risk_module(req_data)
+
+        return result
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    
+    
+
 
 @app.post("/liquidity/analyze")
 async def analyze_liquidity(req: AnalysisRequest):
