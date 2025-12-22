@@ -25,6 +25,12 @@ modules:
       risk and debt servicing capacity.
     output_sections: ["Leverage assessment", "Debt structure", "Maturity profile", "Interest rate risk", "Key concerns", "Positives", "Conclusion"]
     input_fields: [short_term_debt, long_term_debt, total_equity, ebitda, ebit, finance_cost, revenue, capex, cwip, total_debt_maturing_lt_1y, total_debt_maturing_1_3y, total_debt_maturing_gt_3y, weighted_avg_interest_rate, floating_rate_debt, fixed_rate_debt, interest_expense, total_debt]
+    computed_fields:
+      total_debt: ["short_term_debt + long_term_debt + (lease_liabilities or 0)"]
+      ebit: ["operating_profit"]
+      finance_cost: ["interest"]
+      ebitda: ["operating_profit + (depreciation or 0)"]
+      revenue: ["revenue or 0"]
     benchmarks:
       de_high: 1.0
       de_moderate: 0.5
@@ -279,6 +285,15 @@ modules:
       dividend sustainability, ROE, funding mix, and dilution risks.
     output_sections: ["Equity quality", "Retained earnings", "Dividend policy", "ROE", "Funding mix", "Concerns", "Positives"]
     input_fields: [share_capital, reserves_and_surplus, net_worth, pat, dividend_paid, free_cash_flow, new_share_issuance, debt_equitymix]
+    computed_fields:
+      debt: ["short_term_debt + long_term_debt + (lease_liabilities or 0)"]
+      share_capital: ["equity_capital or total_equity"]
+      reserves_and_surplus: ["reserves or 0"]
+      net_worth: ["share_capital + reserves_and_surplus"]
+      pat: ["net_profit"]
+      dividends_paid: ["dividends_paid or 0"]
+      free_cash_flow: ["cash_from_operating_activity + fixed_assets_purchased"]
+      revenue: ["revenue or 0"]
     benchmarks:
       payout_high: 0.50
       roe_good: 0.15

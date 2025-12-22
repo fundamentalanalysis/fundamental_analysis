@@ -156,6 +156,70 @@ def prepare_historical_data(fds: List[FinancialYearInput]) -> List[Dict[str, flo
     return [financial_year_to_dict(fy) for fy in sorted_fds]
 
 
+def prepare_module_input(request: AnalyzeRequest, module_id: str) -> Dict[str, Any]:
+    """
+    Generic input preparation for ANY module based on YAML config.
+    
+    Computes missing fields and normalizes input for module analysis.
+    Field computations are defined in module config under 'computed_fields'.
+    
+    Example YAML config entry:
+        equity_funding_mix:
+            computed_fields:
+                debt: ["short_term_debt + long_term_debt + lease_liabilities"]
+                share_capital: ["equity_capital or total_equity"]
+                net_worth: ["share_capital + reserves_and_surplus"]
+    """
+    from src.app.config import get_module_config
+    
+    module_config = get_module_config(module_id)
+    if not module_config:
+        raise ValueError(f"Module '{module_id}' not found in configuration")
+    
+    prepared_years = []
+    
+    for fy in request.financial_data.financial_years:
+        fy_dict = fy.model_dump()
+        
+        # Get computed field definitions for this module
+        computed_fields = module_config.get("computed_fields", {})
+        
+        # Apply field computations
+        for target_field, computation_rules in computed_fields.items():
+            # Skip if field already exists in input
+            if fy_dict.get(target_field) is not None:
+                continue
+            
+            # Try each computation rule in order
+            for rule in computation_rules:
+                try:
+                    # Simple evaluations: "field1 + field2", "field1 or field2", etc.
+                    # Build a safe context with available values
+                    safe_dict = {k: v or 0 for k, v in fy_dict.items()}
+                    
+                    # Evaluate the rule
+                    computed_value = eval(rule, {"__builtins__": {}}, safe_dict)
+                    fy_dict[target_field] = computed_value
+                    break  # Use first successful rule
+                except (KeyError, NameError, TypeError, ZeroDivisionError):
+                    # Rule failed, try next one
+                    continue
+        
+        # Ensure all required fields exist (default to 0)
+        required_fields = module_config.get("input_fields", [])
+        for field in required_fields:
+            if fy_dict.get(field) is None:
+                fy_dict[field] = 0.0
+        
+        prepared_years.append(fy_dict)
+    
+    return {
+        "company": request.company,
+        "module": module_id,
+        "prepared_years": prepared_years,
+    }
+
+
 # Metric descriptions for investor-friendly summaries
 METRIC_DESCRIPTIONS = {
     # Debt metrics
@@ -483,7 +547,7 @@ def analyze(req: AnalyzeRequest):
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
-        modules = ['borrowings'] if req.modules is None else req.modules
+        modules = ['equity_funding_mix'] if req.modules is None else req.modules
         
         # Run workflow
         result = workflow.run(
@@ -592,4 +656,4 @@ def get_workflow_graph():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("src.main:app", host="127.0.0.1", port=8001, reload=True)

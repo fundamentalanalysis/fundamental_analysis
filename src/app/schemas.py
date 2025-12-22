@@ -179,3 +179,67 @@ class AnalyzeResponse(BaseModel):
     yoy_growth: Optional[Dict[str, Dict[str, Optional[float]]]] = None  # metric_name -> {year: growth%}
     overall_score: Optional[int] = None
     summary: Optional[str] = None
+
+
+# ---------------------------------------------------------
+# MODULE-SPECIFIC INPUT SCHEMAS (for backward compatibility)
+# ---------------------------------------------------------
+
+class YearFinancialInput(BaseModel):
+    """Equity funding mix specific input"""
+    year: int
+    share_capital: float = 0.0
+    reserves_and_surplus: float = 0.0
+    net_worth: float = 0.0
+    pat: float = 0.0
+    net_profit: int = 0
+    dividends_paid: float = 0.0
+    free_cash_flow: Optional[float] = None
+    new_share_issuance: Optional[float] = 0.0
+    debt: float = 0.0
+    revenue: Optional[float] = None
+
+
+class IndustryBenchmarks(BaseModel):
+    """Industry benchmarks for equity analysis"""
+    payout_normal: float
+    payout_high: float
+    roe_good: float
+    roe_modest: float
+    dilution_warning: float = 0.05
+
+
+class EquityFundingInput(BaseModel):
+    """Equity funding mix module input"""
+    company_id: str
+    industry_code: str
+    financials_5y: List[YearFinancialInput]
+    industry_equity_benchmarks: IndustryBenchmarks
+
+    @classmethod
+    def to_analyze_request(cls, obj: "EquityFundingInput") -> "AnalyzeRequest":
+        """Convert module-specific input to GenericAgent AnalyzeRequest"""
+        financial_data = FinancialData(
+            financial_years=[
+                FinancialYearInput(
+                    year=fy.year,
+                    equity_capital=fy.share_capital,
+                    reserves=fy.reserves_and_surplus,
+                    total_equity=fy.net_worth,
+                    net_profit=fy.pat,
+                    dividends_paid=fy.dividends_paid,
+                    free_cash_flow=fy.free_cash_flow,
+                    new_share_issuance=fy.new_share_issuance,
+                    borrowings=fy.debt,
+                    revenue=fy.revenue,
+                )
+                for fy in obj.financials_5y
+            ]
+        )
+        return AnalyzeRequest(
+            company=obj.company_id,
+            financial_data=financial_data,
+            modules=["equity_funding_mix"],
+            generate_narrative=True,
+            year=max(fy.year for fy in obj.financials_5y),
+        )

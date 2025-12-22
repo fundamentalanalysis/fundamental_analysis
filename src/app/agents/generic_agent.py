@@ -57,14 +57,37 @@ class ModuleOutput(BaseModel):
     company: Optional[str] = None
     year: Optional[int] = None
     key_metrics: Dict[str, Any]
-    trends: Dict[str, TrendDetail]
+    trends: Dict[str, Any]  # Flexible for different trend formats
     analysis_narrative: List[str]
-    red_flags: List[str]
+    red_flags: List[Dict[str, Any]]  # Now supports both simple strings and detailed dicts
     positive_points: List[str]
     rules: List[RuleResult]
     score: int
     score_interpretation: str
     llm_narrative: Optional[str] = None
+    
+    class Config:
+        # Allow flexibility for red_flags to be strings or dicts
+        arbitrary_types_allowed = True
+    
+    def to_module_output_dict(self) -> Dict[str, Any]:
+        """Convert to plain dict for JSON serialization"""
+        return self.model_dump() if hasattr(self, 'model_dump') else self.dict()
+    
+    def to_legacy_format(self) -> Dict[str, Any]:
+        """Convert to legacy module-specific output format (e.g., EquityFundingOutput)"""
+        return {
+            "module": self.module,
+            "company": self.company,
+            "key_metrics": self.key_metrics,
+            "trends": self.trends,
+            "analysis_narrative": self.analysis_narrative,
+            "red_flags": self.red_flags,
+            "positive_points": self.positive_points,
+            "rules": [r.model_dump() if hasattr(r, 'model_dump') else r.dict() for r in self.rules],
+            "score": self.score,
+            "score_interpretation": self.score_interpretation,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -155,31 +178,71 @@ class GenericAgent:
         return a / b
     
     def _calc_equity_funding_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate equity & funding mix metrics"""
-        share_capital = data.get("share_capital", 0)
-        reserves = data.get("reserves_and_surplus", 0)
-        net_worth = data.get("net_worth", share_capital + reserves)
-        pat = data.get("pat", 0)
-        dividend_paid = abs(data.get("dividend_paid", 0))
-        fcf = data.get("free_cash_flow", 1)
-        new_shares = data.get("new_share_issuance", 0)
-        debt = data.get("debt_equitymix", 0)
+        """Calculate equity & funding mix metrics - comprehensive implementation"""
+        share_capital = data.get("share_capital") or 0
+        reserves = data.get("reserves_and_surplus") or 0
+        net_worth = data.get("net_worth") or (share_capital + reserves)
+        pat = data.get("pat") or 0
+        dividends_paid = abs(data.get("dividends_paid", 0) or data.get("dividend_paid", 0))
+        fcf = data.get("free_cash_flow") or 1
+        new_shares = data.get("new_share_issuance") or 0
+        debt = data.get("debt") or data.get("debt_equitymix") or 0
         
-        # Prior period values for YoY
-        prior_reserves = data.get("prior_reserves_and_surplus", reserves * 0.9)
-        prior_share_capital = data.get("prior_share_capital", share_capital)
+        # Prior period values for YoY comparison
+        prior_share_capital = data.get("prior_share_capital")
+        prior_reserves = data.get("prior_reserves_and_surplus")
+        prior_net_worth = data.get("prior_net_worth")
+        prior_debt = data.get("prior_debt")
         
-        # Average equity for ROE
-        prior_net_worth = data.get("prior_net_worth", net_worth * 0.9)
-        avg_equity = (net_worth + prior_net_worth) / 2 if prior_net_worth else net_worth
+        # Payout ratio
+        payout_ratio = self._safe_div(dividends_paid, pat) if pat not in (None, 0) else None
+        dividend_to_fcf = self._safe_div(dividends_paid, fcf) if fcf not in (None, 0) else None
+        
+        # Dilution relative to prior share capital
+        dilution_pct = None
+        if prior_share_capital not in (None, 0):
+            dilution_pct = self._safe_div(new_shares, prior_share_capital)
+        
+        # ROE calculation using average equity
+        avg_equity = None
+        if prior_net_worth is not None:
+            avg_equity = (net_worth + prior_net_worth) / 2 if prior_net_worth not in (None, 0) else net_worth
+        else:
+            avg_equity = net_worth if net_worth not in (None, 0) else None
+        
+        roe = self._safe_div(pat, avg_equity) if avg_equity not in (None, 0) else None
+        
+        # Growth rates vs previous year
+        equity_growth = None
+        if prior_share_capital not in (None, 0):
+            equity_growth = self._safe_div(share_capital - prior_share_capital, prior_share_capital)
+        
+        debt_growth = None
+        if prior_debt not in (None, 0):
+            debt_growth = self._safe_div(debt - prior_debt, prior_debt)
+        
+        # Retained earnings growth
+        retained_yoy = None
+        if prior_reserves not in (None, 0):
+            retained_yoy = self._safe_div(reserves - prior_reserves, prior_reserves)
         
         return {
+            "share_capital": share_capital,
             "retained_earnings": reserves,
-            "re_growth_yoy": self._safe_div(reserves - prior_reserves, abs(prior_reserves)) if prior_reserves else 0,
-            "dividend_payout_ratio": self._safe_div(dividend_paid, pat) if pat > 0 else 0,
-            "dividend_to_fcf": self._safe_div(dividend_paid, fcf) if fcf > 0 else 0,
-            "roe": self._safe_div(pat, avg_equity),
-            "equity_dilution_pct": self._safe_div(new_shares, prior_share_capital) if prior_share_capital else 0,
+            "retained_yoy_pct": retained_yoy,
+            "net_worth": net_worth,
+            "pat": pat,
+            "dividends_paid": dividends_paid,
+            "free_cash_flow": fcf,
+            "new_share_issuance": new_shares,
+            "debt": debt,
+            "payout_ratio": payout_ratio,
+            "dividend_to_fcf": dividend_to_fcf,
+            "dilution_pct": dilution_pct,
+            "roe": roe,
+            "avg_equity": avg_equity,
+            "equity_growth_rate": equity_growth,
+            "debt_growth_rate": debt_growth,
             "debt_to_equity": self._safe_div(debt, net_worth),
             "equity_ratio": self._safe_div(net_worth, net_worth + debt),
         }
@@ -581,8 +644,52 @@ class GenericAgent:
         return False
     
     # -----------------------------------------------------------------------
-    # TRENDS CALCULATION
+    # TRENDS CALCULATION & UTILITIES
     # -----------------------------------------------------------------------
+    
+    def _compute_cagr(self, start: float, end: float, years: int) -> Optional[float]:
+        """Compute CAGR handling None, zero, and mixed signs. Returns percentage or None."""
+        if start is None or end is None or years <= 0:
+            return None
+        if start == 0:
+            return None  # CAGR undefined when start is zero
+        
+        # Same sign case (both positive OR both negative)
+        if start * end > 0:
+            cagr = (abs(end) / abs(start)) ** (1 / years) - 1
+            # If both negative, return magnitude of loss growth
+            return cagr * 100
+        
+        # Mixed signs (negative to positive or vice versa) → undefined CAGR
+        return None
+    
+    def _compute_yoy(self, current: float, previous: float) -> Optional[float]:
+        """Compute year-over-year growth rate as percentage."""
+        if previous in (None, 0) or current is None:
+            return None
+        return (current - previous) / previous * 100
+    
+    def _series(self, years: List[int], yearly: Dict[int, dict], key: str) -> List[Optional[float]]:
+        """Extract series of values for a key across years."""
+        return [yearly.get(y, {}).get(key) for y in years]
+    
+    def _has_consecutive_trend(self, values: List[Optional[float]], direction: str, span: int) -> bool:
+        """Check for consecutive trend (up/down) across span years."""
+        if len(values) < span:
+            return False
+        cmp = (lambda a, b: a > b) if direction == "up" else (lambda a, b: a < b)
+        streak = 0
+        for prev, curr in zip(values, values[1:]):
+            if prev is None or curr is None:
+                streak = 0
+                continue
+            if cmp(curr, prev):
+                streak += 1
+                if streak >= span - 1:
+                    return True
+            else:
+                streak = 0
+        return False
     
     def calculate_trends(self, historical_data: List[Dict[str, float]]) -> List[TrendResult]:
         """
@@ -722,6 +829,113 @@ class GenericAgent:
             "finance_cost_cagr": finance_cost_cagr or 0,
         }
     
+    def _calculate_equity_funding_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        """
+        Calculate comprehensive trend metrics for equity_funding_mix module.
+        Includes CAGR, YoY growth, trend detection, and dilution events.
+        
+        Args:
+            historical_data: List of dicts with year and equity metrics (oldest first)
+            
+        Returns:
+            Dict with retained_cagr, roe_cagr, payout_cagr, etc.
+        """
+        if not historical_data or len(historical_data) < 2:
+            return {}
+        
+        # Build yearly dict keyed by year
+        yearly = {}
+        for d in historical_data:
+            year = d.get("year")
+            if year:
+                yearly[year] = d
+        
+        if len(yearly) < 2:
+            return {}
+        
+        years = sorted(yearly.keys())
+        first_year = years[0]
+        last_year = years[-1]
+        num_years = len(years)
+        
+        # Calculate CAGRs
+        retained_cagr = self._compute_cagr(
+            yearly[first_year].get("retained_earnings"),
+            yearly[last_year].get("retained_earnings"),
+            num_years - 1
+        )
+        roe_cagr = self._compute_cagr(
+            yearly[first_year].get("roe"),
+            yearly[last_year].get("roe"),
+            num_years - 1
+        )
+        payout_cagr = self._compute_cagr(
+            yearly[first_year].get("payout_ratio") or 0.01,
+            yearly[last_year].get("payout_ratio") or 0.01,
+            num_years - 1
+        )
+        pat_cagr = self._compute_cagr(
+            yearly[first_year].get("pat"),
+            yearly[last_year].get("pat"),
+            num_years - 1
+        )
+        equity_cagr = self._compute_cagr(
+            yearly[first_year].get("share_capital"),
+            yearly[last_year].get("share_capital"),
+            num_years - 1
+        )
+        debt_cagr = self._compute_cagr(
+            yearly[first_year].get("debt"),
+            yearly[last_year].get("debt"),
+            num_years - 1
+        )
+        
+        # YoY growth arrays and dilution detection
+        payout_yoy = []
+        roe_yoy = []
+        dilution_events = []
+        
+        for prev_year, curr_year in zip(years, years[1:]):
+            prev = yearly[prev_year]
+            curr = yearly[curr_year]
+            payout_yoy.append(self._compute_yoy(
+                curr.get("payout_ratio"),
+                prev.get("payout_ratio")
+            ))
+            roe_yoy.append(self._compute_yoy(
+                curr.get("roe"),
+                prev.get("roe")
+            ))
+            # Track dilution events
+            dilution = curr.get("dilution_pct")
+            if dilution is not None and dilution > 0:
+                dilution_events.append({
+                    "year": curr.get("year"),
+                    "dilution_pct": dilution
+                })
+        
+        # Trend detection (3-year declining trend)
+        retained_series = self._series(years, yearly, "retained_earnings")
+        payout_series = self._series(years, yearly, "payout_ratio")
+        roe_series = self._series(years, yearly, "roe")
+        
+        retained_declining = self._has_consecutive_trend(retained_series, "down", 3)
+        roe_declining = self._has_consecutive_trend(roe_series, "down", 3)
+        
+        return {
+            "retained_cagr": retained_cagr,
+            "roe_cagr": roe_cagr,
+            "payout_cagr": payout_cagr,
+            "pat_cagr": pat_cagr,
+            "equity_cagr": equity_cagr,
+            "debt_cagr": debt_cagr,
+            "payout_yoy_growth": payout_yoy,
+            "roe_yoy_growth": roe_yoy,
+            "dilution_events": dilution_events,
+            "retained_declining": retained_declining,
+            "roe_declining": roe_declining,
+        }
+    
     # -----------------------------------------------------------------------
     # SCORING
     # -----------------------------------------------------------------------
@@ -821,6 +1035,56 @@ Keep the analysis concise but insightful.
             return f"[Narrative generation failed: {str(e)}]"
     
     # -----------------------------------------------------------------------
+    # INPUT PREPARATION
+    # -----------------------------------------------------------------------
+    
+    def _prepare_input(self, data: Dict[str, float]) -> Dict[str, float]:
+        """
+        Prepare input by computing derived fields based on module config.
+        
+        Reads 'computed_fields' from module config and safely evaluates expressions.
+        Example: debt = "short_term_debt + long_term_debt + (lease_liabilities or 0)"
+        
+        Args:
+            data: Raw financial data dictionary
+            
+        Returns:
+            Prepared data dictionary with computed fields filled in
+        """
+        prepared = dict(data)  # Copy input data
+        
+        computed_fields = self.config.get("computed_fields", {})
+        
+        # Apply field computations
+        for target_field, computation_rules in computed_fields.items():
+            # Skip if field already exists in input
+            if prepared.get(target_field) is not None:
+                continue
+            
+            # Try each computation rule in order (fallback support)
+            for rule in computation_rules:
+                try:
+                    # Build safe context with None values converted to 0
+                    safe_dict = {k: v or 0 for k, v in prepared.items()}
+                    
+                    # Evaluate expression with limited builtins
+                    computed_value = eval(rule, {"__builtins__": {}}, safe_dict)
+                    prepared[target_field] = computed_value
+                    break  # Use first successful rule
+                    
+                except (KeyError, NameError, TypeError, ZeroDivisionError, SyntaxError):
+                    # Rule failed, try next one
+                    continue
+        
+        # Ensure all required fields exist (default to 0)
+        required_fields = self.config.get("input_fields", [])
+        for field in required_fields:
+            if prepared.get(field) is None:
+                prepared[field] = 0.0
+        
+        return prepared
+    
+    # -----------------------------------------------------------------------
     # MAIN ANALYZE METHOD
     # -----------------------------------------------------------------------
     
@@ -840,22 +1104,43 @@ Keep the analysis concise but insightful.
         Returns:
             ModuleOutput with detailed analysis results
         """
+        # 0. Prepare input - compute derived fields based on module config
+        prepared_data = self._prepare_input(data)
+        
+        # Prepare historical data as well
+        prepared_historical = None
+        if historical_data:
+            prepared_historical = [self._prepare_input(h) for h in historical_data]
+        
         # 1. Calculate metrics
-        metrics = self.calculate_metrics(data)
+        metrics = self.calculate_metrics(prepared_data)
         
         # 2. For borrowings module, calculate trend-based comparison metrics
-        if self.module_id == "borrowings" and historical_data and len(historical_data) >= 2:
-            trend_metrics = self._calculate_trend_comparison_metrics(historical_data)
+        if self.module_id == "borrowings" and prepared_historical and len(prepared_historical) >= 2:
+            trend_metrics = self._calculate_trend_comparison_metrics(prepared_historical)
             metrics.update(trend_metrics)
+        
+        # 2b. For equity_funding_mix, calculate comprehensive trend metrics
+        equity_trends = {}
+        if self.module_id == "equity_funding_mix" and prepared_historical and len(prepared_historical) >= 2:
+            # Compute metrics for each historical year
+            historical_with_metrics = []
+            for h_data in prepared_historical:
+                h_metrics = self._calc_equity_funding_metrics(h_data)
+                h_metrics["year"] = h_data.get("year")
+                historical_with_metrics.append(h_metrics)
+            
+            equity_trends = self._calculate_equity_funding_trends(historical_with_metrics)
+            metrics.update(equity_trends)
         
         # 3. Evaluate rules with year
         rules_results = self.evaluate_rules(metrics, year)
         
         # 4. Calculate detailed trends with YoY breakdown
-        detailed_trends = self._calculate_detailed_trends(historical_data) if historical_data else {}
+        detailed_trends = self._calculate_detailed_trends(prepared_historical) if prepared_historical else {}
         
         # 5. Calculate CAGR trends for key_metrics
-        cagr_trends = self._calculate_cagr_metrics(historical_data) if historical_data else {}
+        cagr_trends = self._calculate_cagr_metrics(prepared_historical) if prepared_historical else {}
         
         # 6. Calculate score
         score, interpretation = self.calculate_score(rules_results)
@@ -869,7 +1154,23 @@ Keep the analysis concise but insightful.
         analysis_narrative = self._generate_analysis_narrative(metrics, cagr_trends, rules_results)
         
         # 9. Extract red_flags and positive_points from rules
-        red_flags = [r.reason for r in rules_results if r.flag == "RED"]
+        # Format red_flags as detailed dictionaries for compatibility with borrowings schema
+        red_flags = []
+        for r in rules_results:
+            if r.flag == "RED":
+                red_flags.append({
+                    "rule_id": r.rule_id,
+                    "rule_name": r.rule_name,
+                    "metric": r.metric,
+                    "year": r.year,
+                    "flag": r.flag,
+                    "value": r.value,
+                    "threshold": r.threshold,
+                    "reason": r.reason,
+                    "implication": r.implication,
+                    "risk_level": r.risk_level
+                })
+        
         positive_points = [r.reason for r in rules_results if r.flag == "GREEN"]
         
         # 10. Generate LLM narrative if requested
@@ -957,7 +1258,7 @@ Keep the analysis concise but insightful.
             }
         elif self.module_id == "equity_funding_mix":
             return {
-                "reserves_and_surplus": "Retained Earnings",
+                "reserves": "Retained Earnings",
                 "net_worth": "Net Worth",
                 "pat": "PAT",
                 "share_capital": "Share Capital"
@@ -1049,11 +1350,16 @@ Keep the analysis concise but insightful.
             narrative.append(f"Floating rate exposure at {floating:.0f}%.")
             
         elif self.module_id == "equity_funding_mix":
-            roe = metrics.get("roe", 0) * 100
-            payout = metrics.get("dividend_payout_ratio", 0) * 100
-            de_ratio = metrics.get("debt_to_equity", 0)
+            roe = metrics.get("roe", 0) * 100 if metrics.get("roe") else 0
+            payout = metrics.get("payout_ratio", 0) * 100 if metrics.get("payout_ratio") else 0
+            de_ratio = metrics.get("debt_to_equity", 0) or 0
+            roe_cagr = cagr_metrics.get("roe_cagr", 0) or 0
+            retained_cagr = cagr_metrics.get("retained_cagr", 0) or 0
+            pat_cagr = cagr_metrics.get("pat_cagr", 0) or 0
             
-            narrative.append(f"Return on Equity at {roe:.1f}%.")
+            narrative.append(f"ROE at {roe:.1f}% (CAGR: {roe_cagr:.1f}%).")
+            narrative.append(f"Retained earnings CAGR: {retained_cagr:.1f}%.")
+            narrative.append(f"PAT CAGR: {pat_cagr:.1f}%.")
             narrative.append(f"Dividend payout ratio at {payout:.1f}%.")
             narrative.append(f"Debt-to-Equity ratio at {de_ratio:.2f}x.")
         
