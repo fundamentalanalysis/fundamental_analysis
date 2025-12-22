@@ -186,54 +186,79 @@ class GenericAgent:
     
     def _calc_borrowings_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
         """Calculate borrowings metrics - comprehensive version matching original module"""
-        st_debt = data.get("short_term_debt", 0)
-        lt_debt = data.get("long_term_debt", 0)
-        total_debt = data.get("total_debt", st_debt + lt_debt)
-        if total_debt == 0:
+        st_debt = data.get("short_term_debt", 0) or 0
+        lt_debt = data.get("long_term_debt", 0) or 0
+        total_debt = data.get("total_debt")
+        if not total_debt:
             total_debt = st_debt + lt_debt
             
-        equity = data.get("total_equity", 1)
-        ebitda = data.get("ebitda", 1)
-        ebit = data.get("ebit", 0)
-        finance_cost = data.get("finance_cost", 1)
-        cwip = data.get("cwip", 0)
-        revenue = data.get("revenue", 0)
+        equity = data.get("total_equity", 0) or 0
+        ebitda = data.get("ebitda", 0) or 0
+        ebit = data.get("ebit", 0) or 0
+        finance_cost = data.get("finance_cost", 0) or 0
+        cwip = data.get("cwip", 0) or 0
+        revenue = data.get("revenue", 0) or 0
+        ocf = data.get("operating_cash_flow", 0) or 0
         
         # Maturity profile
-        maturity_lt_1y = data.get("total_debt_maturing_lt_1y", 0)
-        maturity_1_3y = data.get("total_debt_maturing_1_3y", 0)
-        maturity_gt_3y = data.get("total_debt_maturing_gt_3y", 0)
+        maturity_lt_1y = data.get("total_debt_maturing_lt_1y", 0) or 0
+        maturity_1_3y = data.get("total_debt_maturing_1_3y", 0) or 0
+        maturity_gt_3y = data.get("total_debt_maturing_gt_3y", 0) or 0
         
         # Interest rate profile
-        floating_rate = data.get("floating_rate_debt", 0)
-        wacd = data.get("weighted_avg_interest_rate", 0)
+        floating_rate_debt = data.get("floating_rate_debt")
+        fixed_rate_debt = data.get("fixed_rate_debt")
+        weighted_avg_rate = data.get("weighted_avg_interest_rate")
         
         # Total assets proxy for CWIP ratio
-        total_assets = equity + total_debt
+        total_assets = (equity or 0) + (total_debt or 0)
         
-        # Calculate maturity percentages
+        # Calculate maturity percentages (safe handling of None)
         maturity_lt_1y_pct = self._safe_div(maturity_lt_1y, total_debt)
         maturity_1_3y_pct = self._safe_div(maturity_1_3y, total_debt)
         maturity_gt_3y_pct = self._safe_div(maturity_gt_3y, total_debt)
         
         # Balanced maturity check (>=30% 1-3y AND >=20% >3y = positive)
-        maturity_balance = 1 if (maturity_1_3y_pct >= 0.30 and maturity_gt_3y_pct >= 0.20) else 0
+        # Only check if both values are not None
+        maturity_balance = 0
+        if maturity_1_3y_pct is not None and maturity_gt_3y_pct is not None:
+            if maturity_1_3y_pct >= 0.30 and maturity_gt_3y_pct >= 0.20:
+                maturity_balance = 1
         
-        # Handle floating rate - could be ratio or amount
-        if floating_rate <= 1 and floating_rate > 0:
-            floating_share = floating_rate  # Already a ratio
-        else:
-            floating_share = self._safe_div(floating_rate, total_debt)
+        # Handle floating/fixed rate debt that may be ratios or amounts
+        floating_share = None
+        if floating_rate_debt is not None:
+            if 0 < floating_rate_debt <= 1:
+                floating_share = floating_rate_debt
+            else:
+                floating_share = self._safe_div(floating_rate_debt, total_debt)
+        
+        fixed_share = None
+        if fixed_rate_debt is not None:
+            if 0 < fixed_rate_debt <= 1:
+                fixed_share = fixed_rate_debt
+            else:
+                fixed_share = self._safe_div(fixed_rate_debt, total_debt)
+        elif floating_share is not None:
+            fixed_share = max(0.0, 1 - floating_share)
+
+        # Cost of debt metrics
+        finance_cost_yield = self._safe_div(finance_cost, total_debt)
+        wacd = weighted_avg_rate if weighted_avg_rate is not None else finance_cost_yield
         
         return {
             "total_debt": total_debt,
+            "total_assets": total_assets,
             "de_ratio": self._safe_div(total_debt, equity),
             "debt_ebitda": self._safe_div(total_debt, ebitda),
             "interest_coverage": self._safe_div(ebit, finance_cost),
-            "st_debt_share": self._safe_div(st_debt, total_debt) if total_debt > 0 else 0,
+            "st_debt_share": self._safe_div(st_debt, total_debt) if total_debt else 0,
             "cwip_to_assets": self._safe_div(cwip, total_assets),
             "floating_share": floating_share,
+            "fixed_share": fixed_share,
             "wacd": wacd,
+            "finance_cost_yield": finance_cost_yield,
+            "ocf_to_debt": self._safe_div(ocf, total_debt),
             "maturity_lt_1y_pct": maturity_lt_1y_pct,
             "maturity_1_3y_pct": maturity_1_3y_pct,
             "maturity_gt_3y_pct": maturity_gt_3y_pct,
@@ -426,8 +451,10 @@ class GenericAgent:
             rule_name = rule.get("name", "")
             metric_name = rule.get("metric", "")
             
-            # Get metric value
+            # Get metric value - default to 0 if None
             value = metrics.get(metric_name, 0)
+            if value is None:
+                value = 0
             
             # Evaluate thresholds and get insights
             flag, threshold_str, reason, insights = self._evaluate_rule_with_insights(rule, value, metrics)
@@ -438,7 +465,7 @@ class GenericAgent:
                 metric=metric_name,
                 year=year,
                 flag=flag,
-                value=round(value, 6),
+                value=round(value, 6) if isinstance(value, (int, float)) else value,
                 threshold=threshold_str,
                 reason=reason,
                 implication=insights.get("implication"),
@@ -506,6 +533,8 @@ class GenericAgent:
     
     def _format_value(self, value: float) -> str:
         """Format value appropriately based on magnitude"""
+        if value is None or not isinstance(value, (int, float)):
+            return "N/A"
         if abs(value) < 0.01:
             return f"{value:.4f}"
         elif abs(value) < 10:
@@ -518,6 +547,10 @@ class GenericAgent:
         Parse and check a condition string like "> 1.0", "< 0.5", ">= 0.15"
         """
         if not condition or condition == "-":
+            return False
+        
+        # Handle None or non-numeric values
+        if value is None or not isinstance(value, (int, float)):
             return False
         
         condition = condition.strip()
@@ -542,7 +575,7 @@ class GenericAgent:
             elif condition.startswith("==") or condition.startswith("="):
                 threshold = float(condition.lstrip("=").strip())
                 return abs(value - threshold) < 0.0001
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, TypeError):
             pass
         
         return False
@@ -634,29 +667,59 @@ class GenericAgent:
         # Calculate total_debt if not present
         for d in historical_data:
             if "total_debt" not in d or d.get("total_debt", 0) == 0:
-                d["total_debt"] = d.get("short_term_debt", 0) + d.get("long_term_debt", 0)
+                d["total_debt"] = (d.get("short_term_debt") or 0) + (d.get("long_term_debt") or 0)
         
-        def get_cagr(field: str) -> float:
-            values = [d.get(field, 0) for d in historical_data]
-            if values[0] and values[0] > 0 and values[-1]:
-                return ((values[-1] / values[0]) ** (1 / (n - 1)) - 1) * 100  # As percentage
-            return 0
+        def compute_cagr(start: float, end: float, years: int) -> Optional[float]:
+            """Compute CAGR safely, handling None and zero values"""
+            if start in (None, 0) or end in (None, 0) or start <= 0 or years <= 0:
+                return None
+            try:
+                return ((end / start) ** (1 / years) - 1) * 100
+            except (ZeroDivisionError, ValueError):
+                return None
         
-        debt_cagr = get_cagr("total_debt")
-        ebitda_cagr = get_cagr("ebitda")
-        lt_debt_cagr = get_cagr("long_term_debt")
-        revenue_cagr = get_cagr("revenue")
-        finance_cost_cagr = get_cagr("finance_cost")
+        # Helper to get field from historical data safely
+        def get_field_values(field: str) -> List[Optional[float]]:
+            return [d.get(field) for d in historical_data]
+        
+        # Get CAGR for each metric
+        debt_values = get_field_values("total_debt")
+        ebitda_values = get_field_values("ebitda")
+        lt_debt_values = get_field_values("long_term_debt")
+        revenue_values = get_field_values("revenue")
+        finance_cost_values = get_field_values("finance_cost")
+        st_debt_values = get_field_values("short_term_debt")
+        
+        debt_cagr = compute_cagr(debt_values[0], debt_values[-1], n - 1)
+        ebitda_cagr = compute_cagr(ebitda_values[0], ebitda_values[-1], n - 1)
+        lt_debt_cagr = compute_cagr(lt_debt_values[0], lt_debt_values[-1], n - 1)
+        revenue_cagr = compute_cagr(revenue_values[0], revenue_values[-1], n - 1)
+        finance_cost_cagr = compute_cagr(finance_cost_values[0], finance_cost_values[-1], n - 1)
+        st_debt_cagr = compute_cagr(st_debt_values[0], st_debt_values[-1], n - 1)
+        
+        # Calculate comparison metrics for rules
+        debt_vs_ebitda = None
+        if debt_cagr is not None and ebitda_cagr is not None:
+            debt_vs_ebitda = debt_cagr - ebitda_cagr  # Positive = debt growing faster (RED)
+        
+        lt_debt_vs_revenue = None
+        if lt_debt_cagr is not None and revenue_cagr is not None:
+            lt_debt_vs_revenue = lt_debt_cagr - revenue_cagr  # Positive = LT debt growing faster than revenue
+        
+        finance_cost_vs_debt = None
+        if finance_cost_cagr is not None and debt_cagr is not None:
+            finance_cost_vs_debt = finance_cost_cagr - debt_cagr  # Positive = interest costs growing faster
         
         return {
-            "debt_vs_ebitda_cagr": debt_cagr - ebitda_cagr,  # Positive = debt growing faster (RED)
-            "lt_debt_vs_revenue": 1 if (lt_debt_cagr > 10 and revenue_cagr < 5) else 0,  # A3 rule
-            "finance_cost_vs_debt": finance_cost_cagr - debt_cagr,  # C2 rule (>5 = YELLOW)
-            "debt_cagr": debt_cagr,
-            "ebitda_cagr": ebitda_cagr,
-            "lt_debt_cagr": lt_debt_cagr,
-            "revenue_cagr": revenue_cagr,
-            "finance_cost_cagr": finance_cost_cagr,
+            "debt_vs_ebitda_cagr": debt_vs_ebitda or 0,
+            "lt_debt_vs_revenue": lt_debt_vs_revenue or 0,
+            "finance_cost_vs_debt": finance_cost_vs_debt or 0,
+            "debt_cagr": debt_cagr or 0,
+            "ebitda_cagr": ebitda_cagr or 0,
+            "lt_debt_cagr": lt_debt_cagr or 0,
+            "st_debt_cagr": st_debt_cagr or 0,
+            "revenue_cagr": revenue_cagr or 0,
+            "finance_cost_cagr": finance_cost_cagr or 0,
         }
     
     # -----------------------------------------------------------------------
@@ -974,10 +1037,10 @@ Keep the analysis concise but insightful.
         if self.module_id == "borrowings":
             debt_cagr = cagr_metrics.get("debt_cagr", 0)
             ebitda_cagr = cagr_metrics.get("ebitda_cagr", 0)
-            debt_ebitda = metrics.get("debt_ebitda", 0)
-            icr = metrics.get("interest_coverage", 0)
-            maturity_lt_1y = metrics.get("maturity_lt_1y_pct", 0) * 100
-            floating = metrics.get("floating_share", 0) * 100
+            debt_ebitda = metrics.get("debt_ebitda", 0) or 0
+            icr = metrics.get("interest_coverage", 0) or 0
+            maturity_lt_1y = (metrics.get("maturity_lt_1y_pct") or 0) * 100
+            floating = (metrics.get("floating_share") or 0) * 100
             
             narrative.append(f"Total debt CAGR {debt_cagr:.1f}% vs EBITDA CAGR {ebitda_cagr:.1f}%.")
             narrative.append(f"Debt/EBITDA at {debt_ebitda:.1f}x.")

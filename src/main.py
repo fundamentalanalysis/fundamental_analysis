@@ -89,15 +89,62 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
     data = fy.model_dump()
     
     # Add computed fields
-    data["total_debt"] = data.get("short_term_debt", 0) + data.get("long_term_debt", 0)
+    data["total_debt"] = (data.get("short_term_debt") or 0) + (data.get("long_term_debt") or 0)
     
-    # Map revenue_wc if not set
-    if data.get("revenue_wc", 0) == 0:
+    # Map new input field names to expected field names
+    # Income statement mappings
+    if data.get("operating_profit") is not None:
+        data["ebit"] = data["operating_profit"]
+    if data.get("interest") is not None:
+        data["finance_cost"] = data["interest"]
+    
+    # EBITDA = operating_profit + depreciation (proxy: EBIT + D)
+    if data.get("ebitda") is None and data.get("operating_profit") is not None and data.get("depreciation") is not None:
+        data["ebitda"] = (data.get("operating_profit") or 0) + (data.get("depreciation") or 0)
+    
+    # Current assets and liabilities (for liquidity module)
+    if data.get("current_assets") is None:
+        # Estimate: cash + receivables + inventory
+        data["current_assets"] = (data.get("cash_equivalents") or 0) + \
+                                 (data.get("trade_receivables") or 0) + \
+                                 (data.get("inventories") or 0)
+    
+    if data.get("current_liabilities") is None:
+        # Estimate: trade payables + advance from customers
+        data["current_liabilities"] = (data.get("trade_payables") or 0) + \
+                                       (data.get("advance_from_customers") or 0)
+    
+    # Cash and equivalents mapping
+    if data.get("cash_and_equivalents") is None and data.get("cash_equivalents") is not None:
+        data["cash_and_equivalents"] = data["cash_equivalents"]
+    
+    # Inventory mapping (for working capital and liquidity)
+    if data.get("inventory") is None and data.get("inventories") is not None:
+        data["inventory"] = data["inventories"]
+    
+    # Operating cash flow mapping
+    if data.get("operating_cash_flow") is None and data.get("cash_from_operating_activity") is not None:
+        data["operating_cash_flow"] = data["cash_from_operating_activity"]
+    
+    # COGS estimation (for working capital)
+    if data.get("cogs") is None and data.get("revenue") is not None and data.get("operating_profit") is not None:
+        # COGS ≈ revenue - operating_profit (simplified)
+        data["cogs"] = (data.get("revenue") or 0) - (data.get("operating_profit") or 0)
+    
+    # Revenue_wc and inventory_wc for working capital module
+    if data.get("revenue_wc") is None:
         data["revenue_wc"] = data.get("revenue", 0)
     
-    # Map inventory_wc if not set  
-    if data.get("inventory_wc", 0) == 0:
+    if data.get("inventory_wc") is None:
         data["inventory_wc"] = data.get("inventory", 0)
+    
+    # Daily operating expenses (for liquidity module)
+    if data.get("daily_operating_expenses") is None and data.get("expenses") is not None:
+        data["daily_operating_expenses"] = (data.get("expenses") or 0) / 365
+    
+    # Market cap and valuations (if needed, set defaults)
+    if data.get("market_cap") is None:
+        data["market_cap"] = 0
         
     return data
 
@@ -436,7 +483,7 @@ def analyze(req: AnalyzeRequest):
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
-        modules = ['borrowings', 'equity_funding_mix'] if req.modules is None else req.modules
+        modules = ['borrowings'] if req.modules is None else req.modules
         
         # Run workflow
         result = workflow.run(

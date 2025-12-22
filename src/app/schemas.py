@@ -2,8 +2,31 @@
 # schemas.py - Pydantic Models for API Request/Response
 # =============================================================
 
-from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+
+try:
+    from pydantic import BaseModel, field_validator
+    _HAS_FIELD_VALIDATOR = True
+except ImportError:  # Pydantic v1 fallback
+    from pydantic import BaseModel, validator
+    _HAS_FIELD_VALIDATOR = False
+
+
+def _parse_percent_float(value: Any) -> Any:
+    if value is None:
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "":
+            return None
+        if cleaned.endswith("%"):
+            cleaned = cleaned[:-1].strip()
+        cleaned = cleaned.replace(",", "")
+        try:
+            return float(cleaned)
+        except ValueError:
+            return value
+    return value
 
 
 # ---------------------------------------------------------
@@ -11,86 +34,94 @@ from typing import Optional, List, Dict, Any
 # ---------------------------------------------------------
 
 class FinancialYearInput(BaseModel):
-    """Comprehensive financial year data supporting all 12 modules.
-    Most fields are Optional since input schema is not finalized."""
+    """Comprehensive financial year data supporting all 12 modules."""
     year: int  # Required - the fiscal year
     
-    # === BORROWINGS MODULE ===
+    # === BALANCE SHEET - EQUITY & CAPITAL ===
+    equity_capital: Optional[float] = None
+    total_equity: Optional[float] = None
+    reserves: Optional[float] = None
+    preference_capital: Optional[float] = None
+    
+    # === BALANCE SHEET - BORROWINGS & LIABILITIES ===
+    borrowings: Optional[float] = None
     short_term_debt: Optional[float] = None
     long_term_debt: Optional[float] = None
-    total_equity: Optional[float] = None
-    revenue: Optional[float] = None
-    ebitda: Optional[float] = None
-    ebit: Optional[float] = None
-    finance_cost: Optional[float] = None
-    capex: Optional[float] = None
-    cwip: Optional[float] = None
-    
-    # Debt maturity profile
-    total_debt_maturing_lt_1y: Optional[float] = None
-    total_debt_maturing_1_3y: Optional[float] = None
-    total_debt_maturing_gt_3y: Optional[float] = None
-    weighted_avg_interest_rate: Optional[float] = None
-    floating_rate_debt: Optional[float] = None
-    fixed_rate_debt: Optional[float] = None
-    
-    # === EQUITY & FUNDING MIX MODULE ===
-    share_capital: Optional[float] = None
-    reserves_and_surplus: Optional[float] = None
-    net_worth: Optional[float] = None
-    pat: Optional[float] = None
-    dividend_paid: Optional[float] = None
-    new_share_issuance: Optional[float] = None
-    debt_equitymix: Optional[float] = None
-    free_cash_flow: Optional[float] = None
-    
-    # === LIQUIDITY MODULE ===
-    cash_and_equivalents: Optional[float] = None
-    marketable_securities: Optional[float] = None
-    current_assets: Optional[float] = None
-    current_liabilities: Optional[float] = None
-    inventory: Optional[float] = None
-    daily_operating_expenses: Optional[float] = None
-    
-    # === WORKING CAPITAL MODULE ===
-    trade_receivables: Optional[float] = None
+    lease_liabilities: Optional[float] = None
+    other_borrowings: Optional[float] = None
     trade_payables: Optional[float] = None
-    inventory_wc: Optional[float] = None
-    revenue_wc: Optional[float] = None
-    cogs: Optional[float] = None
+    advance_from_customers: Optional[float] = None
+    other_liability_items: Optional[float] = None
     
-    # === CAPEX & ASSET QUALITY MODULE ===
-    net_fixed_assets: Optional[float] = None
+    # === BALANCE SHEET - ASSETS ===
+    trade_receivables: Optional[float] = None
+    inventories: Optional[float] = None
+    cash_equivalents: Optional[float] = None
+    loans_n_advances: Optional[float] = None
+    other_asset_items: Optional[float] = None
+    
+    # === FIXED ASSETS ===
     gross_block: Optional[float] = None
     accumulated_depreciation: Optional[float] = None
-    cwip_asset: Optional[float] = None
-    operating_cash_flow: Optional[float] = None
-    intangibles: Optional[float] = None
-    goodwill: Optional[float] = None
-    
-    # === SOLVENCY MODULE ===
+    fixed_assets: Optional[float] = None
+    intangible_assets: Optional[float] = None
+    investments: Optional[float] = None
+    cwip: Optional[float] = None
     total_assets: Optional[float] = None
-    total_liabilities: Optional[float] = None
     
-    # === VALUATION MODULE ===
-    market_cap: Optional[float] = None
-    share_price: Optional[float] = None
-    book_value: Optional[float] = None
-    dividends_per_share: Optional[float] = None
+    # === INCOME STATEMENT ===
+    revenue: Optional[float] = None
+    expenses: Optional[float] = None
+    material_cost: Optional[float] = None  # Stored as percentage value (e.g., 32.97 for 32.97%)
+    manufacturing_cost: Optional[float] = None  # Stored as percentage value
+    employee_cost: Optional[float] = None  # Stored as percentage value
+    other_cost: Optional[float] = None  # Stored as percentage value
+    operating_profit: Optional[float] = None
+    interest: Optional[float] = None
+    depreciation: Optional[float] = None
+    profit_before_tax: Optional[float] = None
+    tax: Optional[float] = None  # Stored as percentage value (e.g., 19 for 19%)
+    net_profit: Optional[float] = None
+    other_income: Optional[float] = None
     
-    # === RISK ASSESSMENT ===
-    risk_ebit: Optional[float] = None
-    risk_interest: Optional[float] = None
-    risk_net_income: Optional[float] = None
-    risk_operating_cash_flow: Optional[float] = None
-    risk_capex: Optional[float] = None
-    risk_fixed_assets: Optional[float] = None
-    risk_net_debt: Optional[float] = None
-    risk_revenue: Optional[float] = None
-    risk_assets_total: Optional[float] = None
+    # === CASH FLOW STATEMENT ===
+    profit_from_operations: Optional[float] = None
+    working_capital_changes: Optional[float] = None
+    direct_taxes: Optional[float] = None
+    interest_paid_fin: Optional[float] = None
+    cash_from_operating_activity: Optional[float] = None
+    fixed_assets_purchased: Optional[float] = None
+    dividends_paid: Optional[float] = None
+    proceeds_from_shares: Optional[float] = None
+    proceeds_from_borrowings: Optional[float] = None
+    repayment_of_borrowings: Optional[float] = None
     
-    # === CREDIT RATING ===
-    interest_expense: Optional[float] = None
+    # === RELATED PARTY TRANSACTIONS ===
+    related_party_sales: Optional[float] = None
+    related_party_receivables: Optional[float] = None
+
+    if _HAS_FIELD_VALIDATOR:
+        @field_validator(
+            "material_cost",
+            "manufacturing_cost",
+            "employee_cost",
+            "other_cost",
+            "tax",
+            mode="before",
+        )
+        def _parse_percent_fields(cls, value: Any) -> Any:
+            return _parse_percent_float(value)
+    else:
+        @validator(
+            "material_cost",
+            "manufacturing_cost",
+            "employee_cost",
+            "other_cost",
+            "tax",
+            pre=True,
+        )
+        def _parse_percent_fields(cls, value: Any) -> Any:
+            return _parse_percent_float(value)
 
 
 class FinancialData(BaseModel):
