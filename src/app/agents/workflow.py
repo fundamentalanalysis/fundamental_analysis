@@ -41,6 +41,7 @@ class AnalysisState(TypedDict):
     # Configuration
     modules_to_run: List[str]
     generate_narrative: bool
+    include_rules: bool
     
     # Workflow tracking
     current_module: Optional[str]
@@ -99,25 +100,31 @@ def run_module_node(module_id: str):
                 historical_data=state.get("historical_data"),
                 generate_llm_narrative=state.get("generate_narrative", True),
                 company_name=state.get("company"),
-                year=state.get("year")
+                year=state.get("year"),
+                include_rules=state.get("include_rules", True),
             )
-            
-            # Extract risk flags from RED rules
-            red_rules = [r for r in result.rules if r.flag == "RED"]
-            risk_flags = []
-            for rule in red_rules:
-                flag = f"[{module_id.upper()}] {rule.rule_name}: {rule.reason}"
-                risk_flags.append(flag)
-            
-            # Extract key insights from GREEN rules
-            key_insights = []
-            green_rules = [r for r in result.rules if r.flag == "GREEN"]
-            for rule in green_rules[:2]:  # Top 2 green rules
-                if rule.reason:
-                    key_insights.append(f"[{module_id.upper()}] ✓ {rule.reason}")
+
+            include_rules = state.get("include_rules", True)
+
+            # When rules are disabled, don't derive risk flags / key insights
+            risk_flags: List[str] = []
+            key_insights: List[str] = []
+            if include_rules:
+                red_rules = [r for r in result.rules if r.flag == "RED"]
+                for rule in red_rules:
+                    flag = f"[{module_id.upper()}] {rule.rule_name}: {rule.reason}"
+                    risk_flags.append(flag)
+
+                green_rules = [r for r in result.rules if r.flag == "GREEN"]
+                for rule in green_rules[:2]:  # Top 2 green rules
+                    if rule.reason:
+                        key_insights.append(f"[{module_id.upper()}] ✓ {rule.reason}")
+
+            # Store minimal module results when rules are disabled
+            stored_result = result.model_dump() if include_rules else result.to_metrics_trends_dict()
             
             return {
-                "module_results": {**state.get("module_results", {}), module_id: result.model_dump()},
+                "module_results": {**state.get("module_results", {}), module_id: stored_result},
                 "modules_completed": [module_id],
                 "current_module": None,
                 "risk_flags": risk_flags,
@@ -316,6 +323,7 @@ class AnalysisWorkflow:
         historical_data: Optional[List[Dict[str, float]]] = None,
         modules: Optional[List[str]] = None,
         generate_narrative: bool = True,
+        include_rules: bool = True,
         thread_id: Optional[str] = None,
         year: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -353,6 +361,7 @@ class AnalysisWorkflow:
             "historical_data": historical_data or [],
             "modules_to_run": modules_to_run,
             "generate_narrative": generate_narrative,
+            "include_rules": include_rules,
             "current_module": None,
             "modules_completed": [],
             "modules_failed": [],
@@ -458,6 +467,7 @@ class AnalysisWorkflow:
         historical_data: Optional[List[Dict[str, float]]] = None,
         modules: Optional[List[str]] = None,
         generate_narrative: bool = True,
+        include_rules: bool = True,
         thread_id: Optional[str] = None,
         year: Optional[int] = None
     ):
@@ -483,6 +493,7 @@ class AnalysisWorkflow:
             "historical_data": historical_data or [],
             "modules_to_run": modules_to_run,
             "generate_narrative": generate_narrative,
+            "include_rules": include_rules,
             "current_module": None,
             "modules_completed": [],
             "modules_failed": [],

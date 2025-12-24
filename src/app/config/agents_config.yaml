@@ -459,266 +459,386 @@ modules:
             risk_level: "Low"
 
   # 3. LIQUIDITY MODULE
-  # liquidity:
-  #   enabled: true
-  #   name: "Liquidity"
-  #   description: "Short-term liquidity, cash position, and working capital"
-  #   agent_prompt: |
-  #     You are a liquidity analyst. Evaluate short-term solvency, cash adequacy, and working capital.
-  #   output_sections: ["Liquidity overview", "Cash position", "Working capital", "Concerns", "Assessment"]
-  #   input_fields: [cash_and_equivalents, marketable_securities, current_assets, current_liabilities, inventory, total_debt, daily_operating_expenses]
-  #   benchmarks:
-  #     current_ratio_low: 1.0
-  #     quick_ratio_low: 0.8
-  #     cash_ratio_low: 0.2
-  #   metrics:
-  #     current_ratio: "current_assets / current_liabilities"
-  #     quick_ratio: "(current_assets - inventory) / current_liabilities"
-  #     cash_ratio: "(cash_and_equivalents + marketable_securities) / current_liabilities"
-  #     cash_coverage_days: "cash_and_equivalents / daily_operating_expenses"
-  #   rules:
-  #     - id: L1
-  #       name: "Current Ratio"
-  #       metric: current_ratio
-  #       red: "< 1.0"
-  #       yellow: "< 1.5"
-  #       green: ">= 1.5"
-  #     - id: L2
-  #       name: "Cash Coverage Days"
-  #       metric: cash_coverage_days
-  #       red: "< 30"
-  #       yellow: "< 90"
-  #       green: ">= 90"
+  liquidity:
+    enabled: true
+    name: "Liquidity"
+    description: "Short-term liquidity, cash position, and working capital"
+    agent_prompt: |
+      You are a liquidity analyst. Evaluate short-term solvency, cash adequacy, and working capital.
+    output_sections: ["Liquidity overview", "Cash position", "Working capital", "Concerns", "Assessment"]
+    input_fields: [cash_and_equivalents, marketable_securities, current_assets, current_liabilities, inventory, total_debt, daily_operating_expenses]
+    benchmarks:
+      current_ratio_low: 1.0
+      quick_ratio_low: 0.8
+      cash_ratio_low: 0.2
+    metrics:
+      current_ratio: "current_assets / current_liabilities"
+      quick_ratio: "(current_assets - inventory) / current_liabilities"
+      cash_ratio: "(cash_and_equivalents + marketable_securities) / current_liabilities"
+      cash_coverage_days: "cash_and_equivalents / daily_operating_expenses"
+    rules:
+      - id: L1
+        name: "Current Ratio"
+        metric: current_ratio
+        red: "< 1.0"
+        yellow: "< 1.5"
+        green: ">= 1.5"
+      - id: L2
+        name: "Cash Coverage Days"
+        metric: cash_coverage_days
+        red: "< 30"
+        yellow: "< 90"
+        green: ">= 90"
 
-  # # 4. WORKING CAPITAL MODULE
-  # working_capital:
-  #   enabled: true
-  #   name: "WorkingCapital"
-  #   description: "Working capital efficiency and cash conversion cycle"
-  #   agent_prompt: |
-  #     You are a working capital analyst. Evaluate inventory, receivables, payables, and cash conversion.
-  #   output_sections: ["WC overview", "Cash cycle", "Efficiency", "Concerns", "Recommendations"]
-  #   input_fields: [trade_receivables, trade_payables, inventory_wc, revenue_wc, cogs]
-  #   benchmarks:
-  #     dso_high: 90
-  #     dio_high: 120
-  #     ccc_high: 90
-  #   metrics:
-  #     dso: "(trade_receivables / revenue_wc) * 365"
-  #     dio: "(inventory_wc / cogs) * 365"
-  #     dpo: "(trade_payables / cogs) * 365"
-  #     cash_conversion_cycle: "dso + dio - dpo"
-  #   rules:
-  #     - id: W1
-  #       name: "Cash Conversion Cycle"
-  #       metric: cash_conversion_cycle
-  #       red: "> 90"
-  #       yellow: "> 60"
-  #       green: "<= 60"
-  #     - id: W2
-  #       name: "Days Sales Outstanding"
-  #       metric: dso
-  #       red: "> 90"
-  #       yellow: "> 60"
-  #       green: "<= 60"
 
-  # # 5. CAPEX & ASSET QUALITY MODULE
-  # capex_asset_quality:
-  #   enabled: true
-  #   name: "CapexAssetQuality"
-  #   description: "Capital expenditure efficiency and asset quality"
-  #   agent_prompt: |
-  #     You are a capital allocation analyst. Evaluate capex efficiency, asset utilization, and quality.
-  #   output_sections: ["Capex analysis", "Asset utilization", "Asset quality", "Concerns", "Recommendations"]
-  #   input_fields: [net_fixed_assets, gross_block, accumulated_depreciation, cwip_asset, capex, revenue, operating_cash_flow, intangibles, goodwill]
-  #   benchmarks:
-  #     asset_turnover_low: 0.5
-  #     capex_ocf_high: 1.0
-  #   metrics:
-  #     asset_turnover: "revenue / net_fixed_assets"
-  #     capex_to_revenue: "capex / revenue"
-  #     capex_to_ocf: "capex / operating_cash_flow"
-  #     asset_age_ratio: "accumulated_depreciation / gross_block"
-  #     cwip_ratio: "cwip_asset / gross_block"
-  #   rules:
-  #     - id: C1
-  #       name: "Asset Turnover"
-  #       metric: asset_turnover
-  #       red: "< 0.5"
-  #       yellow: "< 1.0"
-  #       green: ">= 1.0"
-  #     - id: C2
-  #       name: "Capex to OCF"
-  #       metric: capex_to_ocf
-  #       red: "> 1.0"
-  #       yellow: "> 0.75"
-  #       green: "<= 0.75"
+  # 4. QUALITY OF EARNINGS (QoE) MODULE
+  quality_of_earnings:
+    enabled: true
+    name: "Quality of Earnings"
+    description: "Cash conversion of earnings, accruals, receivables quality, and earnings sustainability"
+    agent_prompt: |
+      You are a forensic accounting analyst.
+      Evaluate the quality of earnings using cash conversion, accruals, receivables quality, and other income dependence.
+    output_sections: ["QoE overview", "Cash conversion", "Accruals", "Receivables quality", "Other income", "Conclusion"]
+    input_fields:
+      - cash_from_operating_activity
+      - net_profit
+      - working_capital_changes
+      - trade_receivables
+      - revenue
+      - total_assets
+      - other_income
+    computed_fields:
+      operating_cash_flow: ["cash_from_operating_activity"]
+      net_income: ["net_profit"]
+      receivables: ["trade_receivables"]
+      change_in_working_capital: ["working_capital_changes"]
+    metrics:
+      operating_cash_flow: "cash_from_operating_activity"
+      net_income: "net_profit"
+      change_in_working_capital: "working_capital_changes"
+      receivables: "trade_receivables"
+      revenue: "revenue"
+      total_assets: "total_assets"
+      other_income: "other_income"
+      qoe: "safe_div(cash_from_operating_activity, net_profit)"
+      accruals_ratio: "safe_div((net_profit - cash_from_operating_activity), total_assets)"
+      revenue_quality: "safe_div(cash_from_operating_activity, revenue)"
+      dso: "safe_div(trade_receivables, revenue) * 365"
+      wc_adjusted_income: "net_profit - working_capital_changes"
+      other_income_ratio: "safe_div(other_income, net_profit)"
 
-  # # 6. PROFITABILITY MODULE
-  # profitability:
-  #   enabled: true
-  #   name: "Profitability"
-  #   description: "Margin analysis and earnings quality"
-  #   agent_prompt: |
-  #     You are a profitability analyst. Evaluate margin trends, earnings quality, and efficiency.
-  #   output_sections: ["Margin analysis", "Earnings quality", "Trends", "Concerns", "Outlook"]
-  #   input_fields: [revenue, ebitda, ebit, pat, operating_cash_flow]
-  #   metrics:
-  #     ebitda_margin: "ebitda / revenue"
-  #     ebit_margin: "ebit / revenue"
-  #     pat_margin: "pat / revenue"
-  #     ocf_to_pat: "operating_cash_flow / pat"
-  #   rules:
-  #     - id: P1
-  #       name: "EBITDA Margin"
-  #       metric: ebitda_margin
-  #       red: "< 0.10"
-  #       yellow: "< 0.15"
-  #       green: ">= 0.15"
-  #     - id: P2
-  #       name: "Cash Earnings Quality"
-  #       metric: ocf_to_pat
-  #       red: "< 0.50"
-  #       yellow: "< 0.80"
-  #       green: ">= 0.80"
+    # Detailed trends output (values + YoY + insight)
+    detailed_trend_fields:
+      qoe: "QoE (CFO/Net Income)"
+      accruals_ratio: "Accruals Ratio"
+      operating_cash_flow: "Operating Cash Flow"
+      net_income: "Net Income"
+      revenue_quality: "Revenue Quality (CFO/Revenue)"
+      dso: "DSO"
+      receivables: "Receivables"
+      revenue: "Revenue"
+      other_income_ratio: "Other Income Ratio"
 
-  # # 7. CASH FLOW MODULE
-  # cash_flow:
-  #   enabled: true
-  #   name: "CashFlow"
-  #   description: "Cash flow quality and sustainability"
-  #   agent_prompt: |
-  #     You are a cash flow analyst. Evaluate OCF, FCF, and cash allocation.
-  #   output_sections: ["OCF analysis", "FCF assessment", "Cash allocation", "Concerns", "Sustainability"]
-  #   input_fields: [operating_cash_flow, capex, free_cash_flow, pat, total_debt]
-  #   metrics:
-  #     fcf: "operating_cash_flow - capex"
-  #     fcf_margin: "fcf / revenue"
-  #     ocf_to_debt: "operating_cash_flow / total_debt"
-  #     fcf_to_pat: "fcf / pat"
-  #   rules:
-  #     - id: CF1
-  #       name: "Free Cash Flow"
-  #       metric: fcf
-  #       red: "< 0"
-  #       yellow: "declining"
-  #       green: ">= 0 and growing"
-  #     - id: CF2
-  #       name: "OCF to Debt"
-  #       metric: ocf_to_debt
-  #       red: "< 0.15"
-  #       yellow: "< 0.25"
-  #       green: ">= 0.25"
+    # Add the special nested trend block requested
+    detailed_special_trends: [receivables_vs_revenue]
 
-  # # 8. SOLVENCY MODULE
-  # solvency:
-  #   enabled: true
-  #   name: "Solvency"
-  #   description: "Long-term solvency and financial stability"
-  #   agent_prompt: |
-  #     You are a solvency analyst. Evaluate long-term stability and debt sustainability.
-  #   output_sections: ["Solvency overview", "Debt sustainability", "Capital structure", "Risks", "Outlook"]
-  #   input_fields: [total_assets, total_liabilities, total_equity, long_term_debt, ebitda, interest_expense]
-  #   metrics:
-  #     equity_to_assets: "total_equity / total_assets"
-  #     debt_to_assets: "total_liabilities / total_assets"
-  #     lt_debt_to_equity: "long_term_debt / total_equity"
-  #   rules:
-  #     - id: S1
-  #       name: "Equity to Assets"
-  #       metric: equity_to_assets
-  #       red: "< 0.30"
-  #       yellow: "< 0.40"
-  #       green: ">= 0.40"
+  # 5. ASSET & INTANGIBLE QUALITY MODULE
+  asset_intangible_quality:
+    enabled: true
+    name: "Asset & Intangible Quality"
+    description: "Asset turnover, asset age proxy, intangibles intensity, amortization proxy, and CWIP/capex quality signals"
+    agent_prompt: |
+      You are an analyst focused on asset quality and intangible-heavy balance sheets.
+      Evaluate asset turnover, asset age proxy, intangibles build-up, CWIP build-up, and capitalization quality.
+    output_sections: ["Asset quality overview", "Turnover", "Asset age", "Intangibles", "CWIP / capitalization", "Conclusion"]
+    input_fields:
+      - gross_block
+      - accumulated_depreciation
+      - fixed_assets
+      - intangible_assets
+      - depreciation
+      - total_assets
+      - revenue
+      - cwip
+    computed_fields:
+      net_block: ["fixed_assets", "gross_block - accumulated_depreciation"]
+    metrics:
+      gross_block: "gross_block"
+      accumulated_depreciation: "accumulated_depreciation"
+      net_block: "net_block"
+      revenue: "revenue"
+      cwip: "cwip"
+      intangible_assets: "intangible_assets"
+      total_assets: "total_assets"
+      asset_turnover: "safe_div(revenue, net_block)"
+      asset_age_proxy: "safe_div(accumulated_depreciation, gross_block)"
+      intangible_pct_total_assets: "safe_div(intangible_assets, total_assets)"
+      intangible_amortization_proxy: "(depreciation or 0) * (safe_div(intangible_assets, (gross_block + intangible_assets)) or 0)"
+      amortization_ratio_proxy: "safe_div(intangible_amortization_proxy, intangible_assets)"
 
-  # # 9. VALUATION MODULE
-  # valuation:
-  #   enabled: true
-  #   name: "Valuation"
-  #   description: "Relative and intrinsic valuation metrics"
-  #   agent_prompt: |
-  #     You are a valuation analyst. Evaluate relative valuation and market expectations.
-  #   output_sections: ["Valuation overview", "Relative metrics", "Historical", "Observations", "Conclusion"]
-  #   input_fields: [market_cap, share_price, pat, book_value, ebitda, revenue, free_cash_flow, dividends_per_share]
-  #   metrics:
-  #     pe_ratio: "market_cap / pat"
-  #     pb_ratio: "market_cap / book_value"
-  #     ev_ebitda: "(market_cap + debt - cash) / ebitda"
-  #     fcf_yield: "free_cash_flow / market_cap"
-  #   rules:
-  #     - id: V1
-  #       name: "P/E Ratio"
-  #       metric: pe_ratio
-  #       red: "> 40"
-  #       yellow: "> 25"
-  #       green: "<= 25"
+    detailed_trend_fields:
+      asset_turnover: "Asset Turnover"
+      asset_age_proxy: "Asset Age Proxy"
+      intangible_assets: "Intangible Assets"
+      intangible_pct_total_assets: "Intangibles % of Total Assets"
+      cwip: "CWIP"
+      revenue: "Revenue"
 
-  # # 10. GROWTH MODULE
-  # growth:
-  #   enabled: true
-  #   name: "Growth"
-  #   description: "Revenue and earnings growth analysis"
-  #   agent_prompt: |
-  #     You are a growth analyst. Evaluate revenue and earnings trajectory.
-  #   output_sections: ["Growth overview", "Revenue trajectory", "Earnings momentum", "Sustainability", "Outlook"]
-  #   input_fields: [revenue, pat, ebitda]
-  #   metrics:
-  #     revenue_growth: "(revenue_t - revenue_t1) / revenue_t1"
-  #     pat_growth: "(pat_t - pat_t1) / pat_t1"
-  #     ebitda_growth: "(ebitda_t - ebitda_t1) / ebitda_t1"
-  #   trends: [revenue_cagr, pat_cagr, ebitda_cagr]
-  #   rules:
-  #     - id: G1
-  #       name: "Revenue CAGR"
-  #       metric: revenue_cagr
-  #       red: "< 0"
-  #       yellow: "< 0.10"
-  #       green: ">= 0.10"
+    # Special trend blocks to match the provided AIQM trend engine
+    detailed_special_trends: [aiqm_capitalization, aiqm_cwip_vs_capitalization]
 
-  # # 11. RISK ASSESSMENT MODULE
-  # risk_assessment:
-  #   enabled: true
-  #   name: "RiskAssessment"
-  #   description: "Financial and operational risk evaluation"
-  #   agent_prompt: |
-  #     You are a risk analyst. Evaluate financial leverage, operational risk, and overall risk.
-  #   output_sections: ["Risk overview", "Financial risk", "Operational risk", "Mitigation", "Rating"]
-  #   input_fields: [risk_ebit, risk_interest, risk_net_income, risk_operating_cash_flow, risk_capex, risk_fixed_assets, risk_net_debt, risk_revenue, risk_assets_total]
-  #   metrics:
-  #     financial_leverage: "risk_assets_total / equity"
-  #     interest_burden: "risk_interest / risk_ebit"
-  #     capex_intensity: "risk_capex / risk_revenue"
-  #   rules:
-  #     - id: R1
-  #       name: "Financial Leverage"
-  #       metric: financial_leverage
-  #       red: "> 3.0"
-  #       yellow: "> 2.0"
-  #       green: "<= 2.0"
+    # CAGR signals (computed into key_metrics)
+    trend_metrics:
+      cagr_fields:
+        - intangible_assets
+        - revenue
+        - gross_block
+      comparison_metrics:
+        intangible_cagr_vs_revenue_cagr: [intangible_assets, revenue]
 
-  # # 12. CREDIT RATING MODULE
-  # credit_rating:
-  #   enabled: true
-  #   name: "CreditRating"
-  #   description: "Credit quality and rating assessment"
-  #   agent_prompt: |
-  #     You are a credit rating analyst. Assess creditworthiness and implied rating.
-  #   output_sections: ["Credit overview", "Key metrics", "Strengths", "Weaknesses", "Rating"]
-  #   input_fields: [total_debt, ebitda, interest_expense, operating_cash_flow, total_equity]
-  #   metrics:
-  #     debt_ebitda: "total_debt / ebitda"
-  #     ebitda_interest: "ebitda / interest_expense"
-  #     ffo_debt: "(ocf + interest) / total_debt"
-  #   rules:
-  #     - id: CR1
-  #       name: "Debt to EBITDA"
-  #       metric: debt_ebitda
-  #       red: "> 5.0"
-  #       yellow: "> 3.0"
-  #       green: "<= 3.0"
-  #     - id: CR2
-  #       name: "Interest Coverage"
-  #       metric: ebitda_interest
-  #       red: "< 2.0"
-  #       yellow: "< 4.0"
-  #       green: ">= 4.0"
+  # 6. CAPEX & CWIP MODULE
+  capex_cwip:
+    enabled: true
+    name: "Capex & CWIP"
+    description: "Capex intensity, CWIP build-up, asset turnover on NFA, debt-funded capex, and FCF coverage"
+    agent_prompt: |
+      You are an analyst focused on capital allocation and reinvestment cycles.
+      Evaluate capex intensity, CWIP build-up, asset turnover on net fixed assets, and whether capex is debt-funded.
+    output_sections: ["Capex overview", "CWIP", "Capex intensity", "Funding mix", "Conclusion"]
+    input_fields:
+      - gross_block
+      - accumulated_depreciation
+      - net_fixed_assets
+      - fixed_assets_purchased
+      - profit_from_operations
+      - working_capital_changes
+      - interest_paid_fin
+      - direct_taxes
+      - operating_cash_flow
+      - free_cash_flow
+      - cwip
+      - revenue
+      - short_term_debt
+      - long_term_debt
+      - lease_liabilities
+    computed_fields:
+      net_fixed_assets:
+        - "net_fixed_assets or (gross_block - accumulated_depreciation)"
+      capex:
+        - "capex or fixed_assets_purchased"
+      operating_cash_flow:
+        - "operating_cash_flow or (profit_from_operations + working_capital_changes + interest_paid_fin - direct_taxes)"
+      free_cash_flow:
+        - "free_cash_flow or (operating_cash_flow - capex)"
+    metrics:
+      capex: "capex"
+      cwip: "cwip"
+      nfa: "net_fixed_assets"
+      revenue: "revenue"
+      operating_cash_flow: "operating_cash_flow"
+      free_cash_flow: "free_cash_flow"
+      capex_intensity: "safe_div(capex, revenue)"
+      cwip_pct: "safe_div(cwip, net_fixed_assets)"
+      asset_turnover: "safe_div(revenue, net_fixed_assets)"
+      debt_funded_capex: "safe_div((short_term_debt + long_term_debt) - ((prev.get('short_term_debt') or 0) + (prev.get('long_term_debt') or 0)), capex)"
+      fcf_coverage: "safe_div(free_cash_flow, capex)"
+
+    detailed_trend_fields:
+      cwip: "CWIP"
+      capex: "Capex"
+      nfa: "Net Fixed Assets (NFA)"
+      revenue: "Revenue"
+      capex_intensity: "Capex Intensity (Capex/Revenue)"
+      cwip_pct: "CWIP % of NFA"
+      asset_turnover: "Asset Turnover (Revenue/NFA)"
+      debt_funded_capex: "Debt-Funded Capex (ΔDebt/Capex)"
+      fcf_coverage: "FCF Coverage (FCF/Capex)"
+
+    trend_metrics:
+      cagr_fields:
+        - cwip
+        - capex
+        - nfa
+        - revenue
+      yoy_fields:
+        - cwip
+        - capex
+        - nfa
+        - revenue
+      special_trends:
+        - cwip_increasing_3y
+        - capex_increasing_3y
+        - nfa_increasing_3y
+
+  # 7. WORKING CAPITAL MODULE
+  working_capital:
+    enabled: true
+    name: "Working Capital"
+    description: "DSO/DIO/DPO, cash conversion cycle, net working capital, and working capital intensity"
+    agent_prompt: |
+      You are a working capital analyst.
+      Evaluate receivables, inventory, payables efficiency and the cash conversion cycle.
+    output_sections: ["Working capital overview", "Receivables", "Inventory", "Payables", "Cash conversion", "Conclusion"]
+    input_fields:
+      - trade_receivables
+      - inventories
+      - trade_payables
+      - revenue
+      - cogs
+      - manufacturing_cost
+      - material_cost
+      - operating_profit
+    computed_fields:
+      inventory:
+        - "inventory"
+        - "inventories"
+      cogs:
+        - "cogs"
+        - "revenue * ((manufacturing_cost or 0) + (material_cost or 0)) / 100"
+        - "(revenue or 0) - (operating_profit or 0)"
+    metrics:
+      trade_receivables: "trade_receivables"
+      inventory: "inventory"
+      trade_payables: "trade_payables"
+      revenue: "revenue"
+      cogs: "cogs"
+      dso: "safe_div(trade_receivables, revenue) * 365"
+      dio: "safe_div(inventory, cogs) * 365"
+      dpo: "safe_div(trade_payables, cogs) * 365"
+      ccc: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
+      nwc: "(trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)"
+      nwc_ratio: "safe_div(((trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)), revenue)"
+
+    detailed_trend_fields:
+      trade_receivables: "Trade Receivables"
+      inventory: "Inventory"
+      trade_payables: "Trade Payables"
+      revenue: "Revenue"
+      dso: "DSO"
+      dio: "DIO"
+      dpo: "DPO"
+      ccc: "Cash Conversion Cycle"
+      nwc: "Net Working Capital"
+      nwc_ratio: "NWC / Revenue"
+
+  # 8. RISK SCENARIO DETECTION MODULE
+  risk_scenario_detection:
+    enabled: true
+    name: "Risk Scenario Detection"
+    description: "Detects forensic risk scenarios such as zombie company behavior, window dressing, asset stripping, loan evergreening, and circular trading"
+    agent_prompt: |
+      You are a forensic risk analyst.
+      Detect risk scenarios across profitability, cashflows, leverage and working capital movements.
+    output_sections: ["Zombie company", "Window dressing", "Asset stripping", "Loan evergreening", "Circular trading"]
+    input_fields:
+      - year
+      - revenue
+      - operating_profit
+      - interest
+      - net_profit
+      - other_income
+      - depreciation
+      - borrowings
+      - short_term_debt
+      - long_term_debt
+      - lease_liabilities
+      - fixed_assets
+      - total_assets
+      - trade_receivables
+      - cash_equivalents
+      - cash_from_operating_activity
+      - dividends_paid
+      - proceeds_from_borrowings
+      - repayment_of_borrowings
+      - interest_paid_fin
+      - related_party_sales
+      - related_party_receivables
+
+    computed_fields:
+      ebitda:
+        - "operating_profit + (depreciation or 0)"
+      cash:
+        - "cash_equivalents or cash_and_equivalents"
+      total_borrowings:
+        - "borrowings"
+        - "(short_term_debt + long_term_debt + (lease_liabilities or 0))"
+      net_debt:
+        - "(total_borrowings or 0) - (cash or 0)"
+      cfo:
+        - "cash_from_operating_activity"
+      receivables:
+        - "trade_receivables"
+
+    metrics:
+      revenue: "revenue"
+      ebit: "operating_profit"
+      interest: "interest"
+      net_profit: "net_profit"
+      other_income: "other_income"
+      depreciation: "depreciation"
+      ebitda: "ebitda"
+      cfo: "cash_from_operating_activity"
+      cash: "cash"
+      fixed_assets: "fixed_assets"
+      receivables: "trade_receivables"
+      net_debt: "net_debt"
+
+    # Explicitly disable default per-metric detailed trends for this module
+    detailed_trend_fields: {}
+    detailed_special_trends: [risk_scenarios]
+
+  # 9. LEVERAGE & FINANCIAL RISK MODULE
+  leverage_financial_risk:
+    enabled: true
+    name: "Leverage & Financial Risk"
+    description: "Leverage ratios + Fitch/S&P-style FFO coverage and debt service burden trends"
+    agent_prompt: |
+      You are a senior credit analyst.
+      Analyze leverage and financial risk using debt, EBITDA, interest, tax and FFO-style cash flow coverage.
+    output_sections: ["Overview", "Basic leverage", "FFO coverage", "Debt service burden", "Conclusion"]
+
+    input_fields:
+      - year
+      - borrowings
+      - short_term_debt
+      - long_term_debt
+      - lease_liabilities
+      - cash_equivalents
+      - cash_and_equivalents
+      - total_equity
+      - equity
+      - operating_profit
+      - ebit
+      - depreciation
+      - interest
+      - finance_cost
+      - profit_before_tax
+      - tax
+
+    metrics:
+      # Absolute values (canonical keys)
+      total_debt: "round((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0, 2)"
+      short_term_debt: "round((short_term_debt or 0), 2)"
+      cash: "round((cash_equivalents or cash_and_equivalents or 0), 2)"
+      equity: "round((total_equity or equity or 0), 2)"
+      ebit: "round((operating_profit or ebit or 0), 2)"
+      ebitda: "round(((operating_profit or ebit or 0) + (depreciation or 0)), 2)"
+      interest_cost: "round((interest or finance_cost or 0), 2)"
+      taxes: "round(((profit_before_tax or 0) * parse_tax_rate(tax)), 2)"
+      net_debt: "round((((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0) - (cash_equivalents or cash_and_equivalents or 0)), 2)"
+      ffo: "round(((((operating_profit or ebit or 0) + (depreciation or 0)) - (interest or finance_cost or 0) - (((profit_before_tax or 0) * parse_tax_rate(tax))))), 2)"
+
+      # Ratios (canonical keys)
+      de_ratio: "round(safe_div(((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0), (total_equity or equity or 0)) or 0, 6)"
+      debt_ebitda: "round(safe_div(((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0), ((operating_profit or ebit or 0) + (depreciation or 0))) or 0, 6)"
+      net_debt_ebitda: "round(safe_div((((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0) - (cash_equivalents or cash_and_equivalents or 0)), ((operating_profit or ebit or 0) + (depreciation or 0))) or 0, 6)"
+      interest_coverage: "round(safe_div((operating_profit or ebit or 0), (interest or finance_cost or 0)) or 0, 6)"
+      st_debt_ratio: "round(safe_div((short_term_debt or 0), ((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0)) or 0, 6)"
+      ffo_coverage: "round(safe_div(((((operating_profit or ebit or 0) + (depreciation or 0)) - (interest or finance_cost or 0) - (((profit_before_tax or 0) * parse_tax_rate(tax))))), (interest or finance_cost or 0)) or 0, 6)"
+
+    # Explicitly disable default per-metric detailed trends for this module.
+    # It uses a special nested trends block to match the reference structure.
+    detailed_trend_fields: {}
+    detailed_special_trends: [leverage_financial_risk]
+

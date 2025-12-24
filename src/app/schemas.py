@@ -137,6 +137,11 @@ class AnalyzeRequest(BaseModel):
     generate_narrative: bool = True  # Whether to generate LLM narratives
     year: Optional[int] = None  # Current financial year for analysis (e.g., 2024)
 
+    # Response shaping
+    # - "full": current response (rules, score, summary, etc.)
+    # - "metrics_trends": return only key_metrics + trends per module (no rules engine)
+    output_mode: str = "metrics_trends"
+
 
 # ---------------------------------------------------------
 # OUTPUT SCHEMAS

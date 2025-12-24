@@ -127,9 +127,15 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
         data["operating_cash_flow"] = data["cash_from_operating_activity"]
     
     # COGS estimation (for working capital)
-    if data.get("cogs") is None and data.get("revenue") is not None and data.get("operating_profit") is not None:
-        # COGS ≈ revenue - operating_profit (simplified)
-        data["cogs"] = (data.get("revenue") or 0) - (data.get("operating_profit") or 0)
+    # Prefer percent-based COGS when manufacturing/material cost % is present.
+    if data.get("cogs") is None and data.get("revenue") is not None:
+        mc = data.get("manufacturing_cost")
+        mat = data.get("material_cost")
+        if mc is not None or mat is not None:
+            data["cogs"] = (data.get("revenue") or 0) * ((mc or 0) + (mat or 0)) / 100
+        elif data.get("operating_profit") is not None:
+            # Fallback: COGS ≈ revenue - operating_profit (simplified)
+            data["cogs"] = (data.get("revenue") or 0) - (data.get("operating_profit") or 0)
     
     # Revenue_wc and inventory_wc for working capital module
     if data.get("revenue_wc") is None:
@@ -547,18 +553,32 @@ def analyze(req: AnalyzeRequest):
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
-        modules = ['equity_funding_mix'] if req.modules is None else req.modules
+        modules = ['borrowings', 'liquidity', 'working_capital',
+                'quality_of_earnings', 'asset_intangible_quality',
+                 'capex_cwip', 'equity_funding_mix' ,'risk_scenario_detection',
+                 'leverage_financial_risk'] if req.modules is None else req.modules
         
+        output_mode = (req.output_mode or "full").lower().strip()
+        metrics_trends_only = output_mode == "metrics_trends"
+
         # Run workflow
         result = workflow.run(
             company=company,
             current_data=current_data,
             historical_data=historical_data,
             modules=modules,
-            generate_narrative=req.generate_narrative,
+            generate_narrative=False if metrics_trends_only else req.generate_narrative,
+            include_rules=not metrics_trends_only,
             year=year
         )
-        
+
+        if metrics_trends_only:
+            return {
+                "company": company,
+                "year": year,
+                "module_results": result.get("module_results"),
+            }
+
         return {
             "company": company,
             "year": year,
@@ -600,6 +620,9 @@ async def analyze_stream(req: AnalyzeRequest):
     historical_data = prepare_historical_data(fds)
     year = req.year if req.year else sorted_fds[0].year
     
+    output_mode = (req.output_mode or "full").lower().strip()
+    metrics_trends_only = output_mode == "metrics_trends"
+
     async def generate():
         try:
             for state_update in workflow.stream(
@@ -607,7 +630,8 @@ async def analyze_stream(req: AnalyzeRequest):
                 current_data=current_data,
                 historical_data=historical_data,
                 modules=req.modules,
-                generate_narrative=req.generate_narrative,
+                generate_narrative=False if metrics_trends_only else req.generate_narrative,
+                include_rules=not metrics_trends_only,
                 year=year
             ):
                 # Send state update as SSE

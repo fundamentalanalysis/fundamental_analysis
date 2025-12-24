@@ -39,8 +39,8 @@ class RuleResult(BaseModel):
 
 class TrendDetail(BaseModel):
     """Detailed trend with YoY breakdown"""
-    values: Dict[str, float]  # {"Y": 100, "Y-1": 90, "Y-2": 80, ...}
-    yoy_growth_pct: Dict[str, float]  # {"Y_vs_Y-1": 11.1, "Y-1_vs_Y-2": 12.5, ...}
+    values: Dict[str, Optional[float]]  # {"Y": 100, "Y-1": 90, "Y-2": 80, ...}
+    yoy_growth_pct: Dict[str, Optional[float]]  # {"Y_vs_Y-1": 11.1, "Y-1_vs_Y-2": 12.5, ...}
     insight: str
 
 
@@ -89,6 +89,16 @@ class ModuleOutput(BaseModel):
             "score_interpretation": self.score_interpretation,
         }
 
+    def to_metrics_trends_dict(self) -> Dict[str, Any]:
+        """Return only key_metrics + trends (no rules engine outputs)."""
+        return {
+            "module": self.module,
+            "company": self.company,
+            "year": self.year,
+            "key_metrics": self.key_metrics,
+            "trends": self.trends,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Generic Agent Class
@@ -132,7 +142,7 @@ class GenericAgent:
     # METRICS CALCULATION
     # -----------------------------------------------------------------------
     
-    def calculate_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
+    def calculate_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
         Calculate all metrics for this module using formulas from config.
         
@@ -166,8 +176,8 @@ class GenericAgent:
         elif self.module_id == "credit_rating":
             metrics = self._calc_credit_rating_metrics(data)
         else:
-            # Fallback: try to compute basic metrics from formulas
-            metrics = self._calc_generic_metrics(data)
+            # Fallback: compute metrics generically from YAML formulas
+            metrics = self._calc_generic_metrics(data, prev_data=prev_data)
         
         return metrics
     
@@ -350,22 +360,60 @@ class GenericAgent:
         }
     
     def _calc_working_capital_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate working capital metrics"""
-        receivables = data.get("trade_receivables", 0)
-        payables = data.get("trade_payables", 0)
-        inventory = data.get("inventory_wc", 0)
-        revenue = data.get("revenue_wc", 1)
-        cogs = data.get("cogs", 1)
-        
-        dso = self._safe_div(receivables, revenue) * 365
-        dio = self._safe_div(inventory, cogs) * 365
-        dpo = self._safe_div(payables, cogs) * 365
-        
+        """Calculate working capital metrics (DSO/DIO/DPO/CCC/NWC).
+
+        Aligns with the reference logic:
+        - COGS derived from revenue * (manufacturing_cost + material_cost) / 100 when available
+        - Uses None for invalid divisions (0/None denominators)
+        """
+        receivables = data.get("trade_receivables")
+        payables = data.get("trade_payables")
+        inventory = data.get("inventory")
+        if inventory is None:
+            inventory = data.get("inventories")
+        revenue = data.get("revenue")
+
+        cogs = data.get("cogs")
+        if cogs is None and revenue is not None:
+            mc = data.get("manufacturing_cost")
+            mat = data.get("material_cost")
+            if mc is not None or mat is not None:
+                cogs = (revenue or 0) * ((mc or 0) + (mat or 0)) / 100
+            else:
+                op = data.get("operating_profit")
+                if op is not None:
+                    cogs = (revenue or 0) - (op or 0)
+        if cogs is None:
+            cogs = 0
+
+        dso_ratio = self._safe_div(receivables or 0, revenue, default=None)
+        dio_ratio = self._safe_div(inventory or 0, cogs, default=None)
+        dpo_ratio = self._safe_div(payables or 0, cogs, default=None)
+
+        dso = (dso_ratio * 365) if dso_ratio is not None else None
+        dio = (dio_ratio * 365) if dio_ratio is not None else None
+        dpo = (dpo_ratio * 365) if dpo_ratio is not None else None
+
+        ccc = None
+        if dso is not None and dio is not None and dpo is not None:
+            ccc = dso + dio - dpo
+
+        nwc = (receivables or 0) + (inventory or 0) - (payables or 0)
+        nwc_ratio = self._safe_div(nwc, revenue, default=None)
+
         return {
+            "trade_receivables": receivables,
+            "inventory": inventory,
+            "trade_payables": payables,
+            "revenue": revenue,
+            "cogs": cogs,
             "dso": dso,
             "dio": dio,
             "dpo": dpo,
-            "cash_conversion_cycle": dso + dio - dpo,
+            "ccc": ccc,
+            "cash_conversion_cycle": ccc,
+            "nwc": nwc,
+            "nwc_ratio": nwc_ratio,
         }
     
     def _calc_capex_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
@@ -493,10 +541,114 @@ class GenericAgent:
             "ffo_debt": self._safe_div(ocf + interest, debt) if debt > 0 else 0,
         }
     
-    def _calc_generic_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Fallback: compute metrics generically (limited functionality)"""
-        # This is a fallback - modules should have specific implementations
-        return {}
+    def _calc_generic_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """Fallback: compute metrics generically from YAML formulas.
+
+        New modules can be added by configuring `metrics:` expressions in YAML.
+        Expressions are evaluated with a restricted namespace.
+        """
+        if not self.metric_formulas:
+            return {}
+
+        from collections import defaultdict
+
+        def safe_div(a: Any, b: Any) -> Optional[float]:
+            if a is None or b in (None, 0):
+                return None
+            return a / b
+
+        def parse_tax_rate(tax_value: Any) -> float:
+            """Convert tax inputs to a decimal rate.
+
+            Supports:
+            - "19%" -> 0.19
+            - 19 or 19.0 -> 0.19 (schema stores percent-like numbers)
+            - 0.19 -> 0.19
+            """
+            if tax_value is None:
+                return 0.0
+            if isinstance(tax_value, str):
+                s = tax_value.strip()
+                if not s:
+                    return 0.0
+                if "%" in s:
+                    try:
+                        return float(s.replace("%", "").strip()) / 100.0
+                    except ValueError:
+                        return 0.0
+                try:
+                    # allow "19" as string
+                    v = float(s)
+                except ValueError:
+                    return 0.0
+                return (v / 100.0) if v > 1 else v
+            if isinstance(tax_value, (int, float)):
+                v = float(tax_value)
+                return (v / 100.0) if v > 1 else v
+            return 0.0
+
+        ctx = defaultdict(lambda: 0)
+        ctx.update({k: (0 if v is None else v) for k, v in data.items()})
+        # Optional previous year context for metrics that require deltas (e.g., debt_funded_capex)
+        ctx["prev"] = prev_data or {}
+
+        # Prevent defaultdict from creating 0-valued placeholders for callable names
+        # (which would shadow the global function and cause "int is not callable").
+        ctx["safe_div"] = safe_div
+        ctx["parse_tax_rate"] = parse_tax_rate
+        ctx["math"] = math
+
+        safe_globals = {
+            "__builtins__": {},
+            "math": math,
+            "safe_div": safe_div,
+            "parse_tax_rate": parse_tax_rate,
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "round": round,
+        }
+
+        metrics: Dict[str, Any] = {}
+        for metric_name, expr in self.metric_formulas.items():
+            try:
+                metrics[metric_name] = eval(expr, safe_globals, ctx)
+            except (ZeroDivisionError, TypeError, ValueError, SyntaxError):
+                metrics[metric_name] = None
+
+        return metrics
+
+    def _enrich_historical_with_metrics_if_needed(
+        self,
+        prepared_historical: List[Dict[str, float]],
+        required_fields: List[str],
+    ) -> List[Dict[str, float]]:
+        """Ensure `prepared_historical` contains the `required_fields`.
+
+        For some modules (e.g., QoE), trend fields are derived metrics (qoe, accruals_ratio, etc)
+        that don't exist in raw financial statements. In such cases we compute metrics per year
+        and merge them into each year's dict.
+        """
+        if not prepared_historical:
+            return prepared_historical
+
+        missing_any = False
+        for field in required_fields:
+            if field and field not in prepared_historical[0]:
+                missing_any = True
+                break
+
+        if not missing_any:
+            return prepared_historical
+
+        enriched: List[Dict[str, float]] = []
+        for idx, year_data in enumerate(prepared_historical):
+            prev_year_data = prepared_historical[idx - 1] if idx > 0 else None
+            year_metrics = self.calculate_metrics(year_data, prev_data=prev_year_data)
+            merged = dict(year_data)
+            merged.update(year_metrics)
+            enriched.append(merged)
+        return enriched
     
     # -----------------------------------------------------------------------
     # RULES EVALUATION
@@ -785,14 +937,9 @@ class GenericAgent:
         n = len(historical_data)
         results = {}
         
-        # Helper: Compute CAGR safely
+        # Helper: Compute CAGR safely (supports same-sign negative series)
         def compute_cagr(start: float, end: float, years: int) -> Optional[float]:
-            if start in (None, 0) or end in (None, 0) or start <= 0 or years <= 0:
-                return None
-            try:
-                return ((end / start) ** (1 / years) - 1) * 100
-            except (ZeroDivisionError, ValueError):
-                return None
+            return self._compute_cagr(start, end, years)
         
         # Helper: Get field values from historical data
         def get_field_values(field: str) -> List[Optional[float]]:
@@ -804,14 +951,16 @@ class GenericAgent:
         
         for field in cagr_fields:
             values = get_field_values(field)
-            if values[0] and values[0] > 0 and values[-1]:
+            cagr_field_name = f"{field}_cagr"
+            if values[0] is not None and values[-1] is not None:
                 cagr = compute_cagr(values[0], values[-1], n - 1)
-                cagr_field_name = f"{field}_cagr"
                 if cagr is not None:
                     cagr_values[field] = cagr  # Store for comparison metrics
                     results[cagr_field_name] = round(cagr, 2)
                 else:
                     results[cagr_field_name] = None
+            else:
+                results[cagr_field_name] = None
         
         # ===== 2. CALCULATE COMPARISON METRICS =====
         # Format: metric_name: [field1, field2] => field1_cagr - field2_cagr
@@ -881,6 +1030,17 @@ class GenericAgent:
                 roe_series = [yearly[y].get("roe") for y in years]
                 roe_declining = self._has_consecutive_trend(roe_series, "down", 3)
                 results["roe_declining"] = roe_declining
+
+            # Special trends: increasing trend flags (3y consecutive rise)
+            if "cwip_increasing_3y" in special_trends:
+                cwip_series = [yearly[y].get("cwip") for y in years]
+                results["cwip_increasing_3y"] = self._has_consecutive_trend(cwip_series, "up", 3)
+            if "capex_increasing_3y" in special_trends:
+                capex_series = [yearly[y].get("capex") for y in years]
+                results["capex_increasing_3y"] = self._has_consecutive_trend(capex_series, "up", 3)
+            if "nfa_increasing_3y" in special_trends:
+                nfa_series = [yearly[y].get("nfa") for y in years]
+                results["nfa_increasing_3y"] = self._has_consecutive_trend(nfa_series, "up", 3)
         
         return results
     
@@ -1050,7 +1210,7 @@ Keep the analysis concise but insightful.
     
     def analyze(self, data: Dict[str, float], historical_data: Optional[List[Dict[str, float]]] = None,
                 generate_llm_narrative: bool = True, company_name: Optional[str] = None,
-                year: Optional[int] = None) -> ModuleOutput:
+                year: Optional[int] = None, include_rules: bool = True) -> ModuleOutput:
         """
         Main entry point: Run complete analysis for this module.
         
@@ -1072,8 +1232,12 @@ Keep the analysis concise but insightful.
         if historical_data:
             prepared_historical = [self._prepare_input(h) for h in historical_data]
         
-        # 1. Calculate metrics
-        metrics = self.calculate_metrics(prepared_data)
+        # 1. Calculate metrics (optionally pass previous year context)
+        prev_for_current = None
+        if prepared_historical and len(prepared_historical) >= 2:
+            # `prepared_historical` is oldest-first; most recent is last
+            prev_for_current = prepared_historical[-2]
+        metrics = self.calculate_metrics(prepared_data, prev_data=prev_for_current)
         
         # 2. UNIFIED TREND CALCULATION (reads from YAML trend_metrics config)
         # This single method replaces:
@@ -1082,64 +1246,80 @@ Keep the analysis concise but insightful.
         #   - Custom logic for other modules
         module_trends = {}
         if prepared_historical and len(prepared_historical) >= 2:
-            # Special handling for equity_funding_mix: compute metrics for each historical year first
-            if self.module_id == "equity_funding_mix":
-                historical_with_metrics = []
-                for h_data in prepared_historical:
-                    h_metrics = self._calc_equity_funding_metrics(h_data)
-                    h_metrics["year"] = h_data.get("year")
-                    historical_with_metrics.append(h_metrics)
-                
-                module_trends = self._calculate_module_trends(historical_with_metrics)
-            else:
-                # For other modules, use prepared historical data directly
-                module_trends = self._calculate_module_trends(prepared_historical)
-            
+            trend_config = self.config.get("trend_metrics", {})
+            required_for_module_trends: List[str] = []
+            if trend_config:
+                required_for_module_trends.extend(trend_config.get("cagr_fields", []) or [])
+                required_for_module_trends.extend(trend_config.get("yoy_fields", []) or [])
+                for pair in (trend_config.get("comparison_metrics", {}) or {}).values():
+                    if isinstance(pair, list) and len(pair) == 2:
+                        required_for_module_trends.extend(pair)
+
+            historical_for_module_trends = self._enrich_historical_with_metrics_if_needed(
+                prepared_historical,
+                required_for_module_trends,
+            )
+            module_trends = self._calculate_module_trends(historical_for_module_trends)
             metrics.update(module_trends)
         
-        # 3. Evaluate rules with year
-        rules_results = self.evaluate_rules(metrics, year)
+        # 3. Evaluate rules with year (optional)
+        rules_results: List[RuleResult] = []
+        if include_rules:
+            rules_results = self.evaluate_rules(metrics, year)
         
         # 4. Calculate detailed trends with YoY breakdown
-        detailed_trends = self._calculate_detailed_trends(prepared_historical) if prepared_historical else {}
+        # For detailed trends, ensure derived fields exist if configured as trend fields
+        detailed_trends = {}
+        if prepared_historical:
+            required_for_detailed_trends = list(self._get_trend_fields().keys())
+            historical_for_detailed_trends = self._enrich_historical_with_metrics_if_needed(
+                prepared_historical,
+                required_for_detailed_trends,
+            )
+            detailed_trends = self._calculate_detailed_trends(historical_for_detailed_trends)
         
         # 5. Calculate CAGR trends for key_metrics
         cagr_trends = self._calculate_cagr_metrics(prepared_historical) if prepared_historical else {}
         
-        # 6. Calculate score
-        score, interpretation = self.calculate_score(rules_results)
+        # 6. Calculate score (optional)
+        score = 0
+        interpretation = ""
+        if include_rules:
+            score, interpretation = self.calculate_score(rules_results)
         
         # 7. Build key_metrics with year and CAGRs
         key_metrics = {"year": year} if year else {}
         key_metrics.update(metrics)
         key_metrics.update(cagr_trends)
         
-        # 8. Generate analysis narrative bullets
-        analysis_narrative = self._generate_analysis_narrative(metrics, cagr_trends, rules_results)
+        # 8. Generate analysis narrative bullets (optional)
+        analysis_narrative: List[str] = []
+        if include_rules:
+            analysis_narrative = self._generate_analysis_narrative(metrics, cagr_trends, rules_results)
         
-        # 9. Extract red_flags and positive_points from rules
-        # Format red_flags as detailed dictionaries for compatibility with borrowings schema
-        red_flags = []
-        for r in rules_results:
-            if r.flag == "RED":
-                red_flags.append({
-                    "rule_id": r.rule_id,
-                    "rule_name": r.rule_name,
-                    "metric": r.metric,
-                    "year": r.year,
-                    "flag": r.flag,
-                    "value": r.value,
-                    "threshold": r.threshold,
-                    "reason": r.reason,
-                    "implication": r.implication,
-                    "risk_level": r.risk_level
-                })
+        # 9. Extract red_flags and positive_points from rules (optional)
+        red_flags: List[Dict[str, Any]] = []
+        positive_points: List[str] = []
+        if include_rules:
+            for r in rules_results:
+                if r.flag == "RED":
+                    red_flags.append({
+                        "rule_id": r.rule_id,
+                        "rule_name": r.rule_name,
+                        "metric": r.metric,
+                        "year": r.year,
+                        "flag": r.flag,
+                        "value": r.value,
+                        "threshold": r.threshold,
+                        "reason": r.reason,
+                        "implication": r.implication,
+                        "risk_level": r.risk_level
+                    })
+            positive_points = [r.reason for r in rules_results if r.flag == "GREEN"]
         
-        positive_points = [r.reason for r in rules_results if r.flag == "GREEN"]
-        
-        # 10. Generate LLM narrative if requested
+        # 10. Generate LLM narrative if requested (and rules enabled)
         narrative = None
-        if generate_llm_narrative:
+        if include_rules and generate_llm_narrative:
             # narrative = self.generate_narrative(metrics, rules_results, detailed_trends, score)
             narrative = "[LLM narrative generation is currently disabled.]"
         
@@ -1202,17 +1382,663 @@ Keep the analysis concise but insightful.
             # Generate insight
             insight = self._generate_trend_insight(display_name, values, yoy_growth)
             
-            if values and any(v != 0 for v in values.values()):
+            if values and any(v not in (None, 0) for v in values.values()):
                 detailed_trends[field_name] = TrendDetail(
                     values=values,
                     yoy_growth_pct=yoy_growth,
                     insight=insight
                 )
+
+        # Optional nested / special trends (module-config driven)
+        detailed_special_trends = self.config.get("detailed_special_trends", []) or []
+        if "receivables_vs_revenue" in detailed_special_trends:
+            # Build newest-first series
+            recv_new = [d.get("receivables") if d.get("receivables") is not None else d.get("trade_receivables") for d in reversed(historical_data)]
+            rev_new = [d.get("revenue") for d in reversed(historical_data)]
+
+            # YoY maps
+            recv_yoy = self._compute_yoy_map_pct(recv_new)
+            rev_yoy = self._compute_yoy_map_pct(rev_new)
+
+            ratio_list: List[Optional[float]] = []
+            for rcv, rev in zip(recv_new, rev_new):
+                if rev in (0, None) or rcv is None:
+                    ratio_list.append(None)
+                else:
+                    ratio_list.append(rcv / rev)
+
+            ratio_yoy = self._compute_yoy_map_pct(ratio_list)
+            detailed_trends["receivables_vs_revenue"] = {
+                "receivable_yoy": recv_yoy,
+                "revenue_yoy": rev_yoy,
+                "receivable_to_revenue_pct": self._build_values_dict(ratio_list),
+                "receivable_to_revenue_yoy": ratio_yoy,
+                "insight": self._generate_recv_vs_revenue_insight(recv_yoy, rev_yoy, ratio_list),
+            }
+
+        if "aiqm_capitalization" in detailed_special_trends or "aiqm_cwip_vs_capitalization" in detailed_special_trends:
+            # Oldest-first series
+            gb_old = [d.get("gross_block") for d in historical_data]
+            cwip_old = [d.get("cwip") for d in historical_data]
+
+            capitalization_old: List[Optional[float]] = [None]
+            for i in range(1, len(historical_data)):
+                gb0, gb1 = gb_old[i - 1], gb_old[i]
+                cw0, cw1 = cwip_old[i - 1], cwip_old[i]
+                if gb0 is None or gb1 is None or cw0 is None or cw1 is None:
+                    capitalization_old.append(None)
+                    continue
+                capitalization_old.append((gb1 - gb0) - (cw1 - cw0))
+
+            # Newest-first for labeling
+            cap_new = list(reversed(capitalization_old))
+            cwip_new = list(reversed(cwip_old))
+
+            if "aiqm_capitalization" in detailed_special_trends:
+                cap_yoy = self._compute_yoy_map_pct(cap_new)
+                cap_values = self._build_values_dict(cap_new)
+                cap_insight = self._generate_trend_insight("Capitalization", cap_values, cap_yoy)
+                detailed_trends["capitalization"] = {
+                    "values": cap_values,
+                    "yoy_growth_pct": cap_yoy,
+                    "insight": cap_insight,
+                }
+
+            if "aiqm_cwip_vs_capitalization" in detailed_special_trends:
+                ratio_new: List[Optional[float]] = []
+                for cw, cap in zip(cwip_new, cap_new):
+                    if cw is None or cap in (None, 0):
+                        ratio_new.append(None)
+                    else:
+                        ratio_new.append(cw / cap)
+                detailed_trends["cwip_vs_capitalization"] = {
+                    "values": self._build_values_dict(ratio_new),
+                    "insight": "CWIP vs Capitalization ratio evaluated.",
+                }
+
+        if "risk_scenarios" in detailed_special_trends:
+            detailed_trends.update(self._calculate_risk_scenarios(historical_data))
+
+        if "leverage_financial_risk" in detailed_special_trends:
+            detailed_trends.update(self._calculate_leverage_financial_risk_trends(historical_data))
         
         return detailed_trends
+
+    def _calculate_leverage_financial_risk_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        """Nested leverage trend block matching the provided lfr_trends.py structure."""
+        if not historical_data:
+            return {}
+
+        def parse_tax_rate(tax_value: Any) -> float:
+            if tax_value is None:
+                return 0.0
+            if isinstance(tax_value, str):
+                s = tax_value.strip()
+                if not s:
+                    return 0.0
+                if "%" in s:
+                    try:
+                        return float(s.replace("%", "").strip()) / 100.0
+                    except ValueError:
+                        return 0.0
+                try:
+                    v = float(s)
+                except ValueError:
+                    return 0.0
+                return (v / 100.0) if v > 1 else v
+            if isinstance(tax_value, (int, float)):
+                v = float(tax_value)
+                return (v / 100.0) if v > 1 else v
+            return 0.0
+
+        # Build per-year canonical metrics
+        per_year: Dict[int, Dict[str, Any]] = {}
+        for d in historical_data:
+            year = d.get("year")
+            if year is None:
+                continue
+
+            total_debt = d.get("borrowings")
+            if total_debt is None:
+                total_debt = (d.get("short_term_debt") or 0) + (d.get("long_term_debt") or 0) + (d.get("lease_liabilities") or 0)
+            total_debt = total_debt or 0
+
+            short_term_debt = d.get("short_term_debt") or 0
+            cash = d.get("cash_equivalents")
+            if cash is None:
+                cash = d.get("cash_and_equivalents")
+            cash = cash or 0
+
+            equity = d.get("equity")
+            if equity is None:
+                equity = d.get("total_equity")
+            equity = equity or 0
+
+            ebit = d.get("operating_profit")
+            if ebit is None:
+                ebit = d.get("ebit")
+            ebit = ebit or 0
+
+            depreciation = d.get("depreciation") or 0
+            ebitda = ebit + depreciation
+
+            interest_cost = d.get("interest")
+            if interest_cost is None:
+                interest_cost = d.get("finance_cost")
+            interest_cost = interest_cost or 0
+
+            profit_before_tax = d.get("profit_before_tax") or 0
+            tax_rate = parse_tax_rate(d.get("tax"))
+            tax_amount = round(profit_before_tax * tax_rate, 2)
+
+            net_debt = total_debt - cash
+            ffo = ebitda - interest_cost - tax_amount
+
+            de_ratio = (total_debt / equity) if equity else 0.0
+            debt_ebitda = (total_debt / ebitda) if ebitda else 0.0
+            net_debt_ebitda = (net_debt / ebitda) if ebitda else 0.0
+            interest_coverage = (ebit / interest_cost) if interest_cost else 0.0
+            st_debt_ratio = (short_term_debt / total_debt) if total_debt else 0.0
+            ffo_coverage = (ffo / interest_cost) if interest_cost else 0.0
+
+            per_year[int(year)] = {
+                "year": int(year),
+                "total_debt": round(total_debt, 2),
+                "short_term_debt": round(short_term_debt, 2),
+                "cash": round(cash, 2),
+                "equity": round(equity, 2),
+                "ebit": round(ebit, 2),
+                "ebitda": round(ebitda, 2),
+                "interest_cost": round(interest_cost, 2),
+                "taxes": tax_amount,
+                "net_debt": round(net_debt, 2),
+                "ffo": round(ffo, 2),
+                "de_ratio": round(de_ratio, 6),
+                "debt_ebitda": round(debt_ebitda, 6),
+                "net_debt_ebitda": round(net_debt_ebitda, 6),
+                "interest_coverage": round(interest_coverage, 6),
+                "st_debt_ratio": round(st_debt_ratio, 6),
+                "ffo_coverage": round(ffo_coverage, 6),
+            }
+
+        if not per_year:
+            return {}
+
+        def _build_values(key: str) -> Dict[str, float]:
+            years = sorted(per_year.keys(), reverse=True)
+            labels = ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]
+            values: Dict[str, float] = {}
+            for i, label in enumerate(labels):
+                if i < len(years):
+                    y = years[i]
+                    values[label] = round(float(per_year[y].get(key, 0.0) or 0.0), 4)
+                else:
+                    values[label] = 0.0
+            return values
+
+        def _generate_trend_insight(values: Dict[str, float], metric_name: str) -> str:
+            series = list(values.values())
+            latest = series[0]
+            oldest = series[-1]
+            if latest < oldest:
+                return f"{metric_name} has improved over the past five years, indicating strengthening financial profile."
+            if latest > oldest:
+                return f"{metric_name} has increased over the past five years, indicating rising leverage or risk."
+            return f"{metric_name} has remained broadly stable over the period."
+
+        # BASIC
+        de_ratio = _build_values("de_ratio")
+        debt_ebitda = _build_values("debt_ebitda")
+        interest_cov = _build_values("interest_coverage")
+
+        # ADVANCED
+        net_debt = _build_values("net_debt")
+        net_debt_ebitda = _build_values("net_debt_ebitda")
+        ffo_cov = _build_values("ffo_coverage")
+        st_ratio = _build_values("st_debt_ratio")
+
+        return {
+            "basic leverage metrics": {
+                "debt_to_equity": {
+                    "total_debt": {"values": _build_values("total_debt")},
+                    "equity": {"values": _build_values("equity")},
+                    "debt to equity": {"values": de_ratio},
+                    "insight": _generate_trend_insight(de_ratio, "Debt-to-Equity"),
+                },
+                "debt_to_ebitda": {
+                    "total_debt": {"values": _build_values("total_debt")},
+                    "ebitda": {"values": _build_values("ebitda")},
+                    "debt to ebitda": {"values": debt_ebitda},
+                    "insight": _generate_trend_insight(debt_ebitda, "Debt-to-EBITDA"),
+                },
+                "interest_coverage": {
+                    "ebit": {"values": _build_values("ebit")},
+                    "interest_cost": {"values": _build_values("interest_cost")},
+                    "interest coverage ratio": {"values": interest_cov},
+                    "insight": _generate_trend_insight(interest_cov, "Interest Coverage"),
+                },
+            },
+            "advanced fitch / s&p style metrics": {
+                "net_debt": {
+                    "total_debt": {"values": _build_values("total_debt")},
+                    "cash": {"values": _build_values("cash")},
+                    "net debt": {"values": net_debt},
+                    "insight": _generate_trend_insight(net_debt, "Net Debt"),
+                },
+                "net_debt_to_ebitda": {
+                    "net_debt": {"values": _build_values("net_debt")},
+                    "ebitda": {"values": _build_values("ebitda")},
+                    "net debt to ebitda": {"values": net_debt_ebitda},
+                    "insight": _generate_trend_insight(net_debt_ebitda, "Net Debt-to-EBITDA"),
+                },
+                "ffo_coverage": {
+                    "ebitda": {"values": _build_values("ebitda")},
+                    "interest_cost": {"values": _build_values("interest_cost")},
+                    "taxes": {"values": _build_values("taxes")},
+                    "ffo": {"values": _build_values("ffo")},
+                    "ffo coverage": {"values": ffo_cov},
+                    "insight": _generate_trend_insight(ffo_cov, "FFO Coverage"),
+                },
+                "debt_service_burden": {
+                    "short_term_debt": {"values": _build_values("short_term_debt")},
+                    "total_debt": {"values": _build_values("total_debt")},
+                    "debt service burden": {"values": st_ratio},
+                    "insight": _generate_trend_insight(st_ratio, "Debt Service Burden"),
+                },
+            },
+            "short-term debt dependence": {
+                "short_term_debt": {"values": _build_values("short_term_debt")},
+                "total_debt": {"values": _build_values("total_debt")},
+                "st debt share": {"values": st_ratio},
+                "insight": _generate_trend_insight(st_ratio, "Short-Term Debt Dependence"),
+            },
+        }
+
+    def _calculate_risk_scenarios(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        """Compute risk scenario detection output from 5Y historical data.
+
+        Produces nested blocks matching the provided reference structure:
+        - zombie_company
+        - window_dressing
+        - asset_stripping
+        - loan_evergreening
+        - circular_trading
+        """
+        if not historical_data or len(historical_data) < 2:
+            return {}
+
+        # Historical data is oldest-first
+        years = [d.get("year") for d in historical_data if d.get("year") is not None]
+        if not years:
+            return {}
+
+        # Build per-year normalized metrics
+        yearly: Dict[int, Dict[str, Any]] = {}
+        for d in historical_data:
+            year = d.get("year")
+            if year is None:
+                continue
+
+            revenue = d.get("revenue") or 0
+            ebit = d.get("operating_profit") if d.get("operating_profit") is not None else (d.get("ebit") or 0)
+            interest = d.get("interest") if d.get("interest") is not None else (d.get("finance_cost") or 0)
+            net_profit = d.get("net_profit") if d.get("net_profit") is not None else (d.get("pat") or 0)
+            other_income = d.get("other_income") or 0
+            depreciation = d.get("depreciation") or 0
+            ebitda = (ebit or 0) + (depreciation or 0)
+
+            cfo = d.get("cash_from_operating_activity")
+            if cfo is None:
+                cfo = d.get("operating_cash_flow")
+            cfo = cfo or 0
+
+            dividends_paid = d.get("dividends_paid")
+            if dividends_paid is None:
+                dividends_paid = d.get("dividend_paid")
+            dividends_paid = dividends_paid or 0
+
+            fixed_assets = d.get("fixed_assets") or 0
+            total_assets = d.get("total_assets") or 0
+            receivables = d.get("trade_receivables") or 0
+
+            cash = d.get("cash_equivalents")
+            if cash is None:
+                cash = d.get("cash_and_equivalents")
+            cash = cash or 0
+
+            borrowings = d.get("borrowings")
+            if borrowings is None:
+                # Try total debt rollup
+                borrowings = d.get("total_debt")
+            if borrowings is None:
+                borrowings = (d.get("short_term_debt") or 0) + (d.get("long_term_debt") or 0) + (d.get("lease_liabilities") or 0)
+            borrowings = borrowings or 0
+            net_debt = borrowings - cash
+
+            proceeds_from_borrowings = d.get("proceeds_from_borrowings") or 0
+            repayment_of_borrowings = abs(d.get("repayment_of_borrowings") or 0)
+
+            interest_paid = abs(d.get("interest_paid_fin") or 0)
+            interest_capitalized = d.get("interest_capitalized") or 0
+            short_term_debt = d.get("short_term_debt") or 0
+
+            rpt_sales = d.get("related_party_sales") or 0
+            rpt_receivables = d.get("related_party_receivables") or 0
+
+            yearly[int(year)] = {
+                "revenue": revenue,
+                "ebit": ebit or 0,
+                "interest": interest or 0,
+                "net_profit": net_profit or 0,
+                "other_income": other_income,
+                "depreciation": depreciation,
+                "ebitda": ebitda,
+                "cfo": cfo,
+                "dividends_paid": dividends_paid,
+                "fixed_assets": fixed_assets,
+                "total_assets": total_assets,
+                "receivables": receivables,
+                "cash": cash,
+                "net_debt": net_debt,
+                "proceeds_from_borrowings": proceeds_from_borrowings,
+                "repayment_of_borrowings": repayment_of_borrowings,
+                "interest_paid": interest_paid,
+                "interest_capitalized": interest_capitalized,
+                "short_term_debt": short_term_debt,
+                "rpt_sales": rpt_sales,
+                "rpt_receivables": rpt_receivables,
+            }
+
+        years_sorted = sorted(yearly.keys())
+        if len(years_sorted) < 2:
+            return {}
+
+        def ym(key: str) -> Dict[str, Any]:
+            # Map latest to Y, previous to Y-1, etc. Supports <5 years gracefully.
+            out: Dict[str, Any] = {}
+            for idx, y in enumerate(reversed(years_sorted[-5:])):
+                out["Y" if idx == 0 else f"Y-{idx}"] = yearly[y].get(key)
+            return out
+
+        # ============================
+        # 3.1 ZOMBIE COMPANY
+        # ============================
+        ebit_below, cfo_below, debt_profit = [], [], []
+        for i in range(1, len(years_sorted)):
+            y, p = years_sorted[i], years_sorted[i - 1]
+
+            if yearly[y]["ebit"] < yearly[y]["interest"]:
+                ebit_below.append(y)
+            if yearly[y]["cfo"] < yearly[y]["interest"]:
+                cfo_below.append(y)
+            if yearly[y]["net_debt"] > yearly[p]["net_debt"] and yearly[y]["net_profit"] < yearly[p]["net_profit"]:
+                debt_profit.append(y)
+
+        zombie_company = {
+            "ebit_vs_interest": {
+                "values": {"ebit": ym("ebit"), "interest": ym("interest")},
+                "comparison": {
+                    "years_below": ebit_below,
+                    "rule_triggered": len(ebit_below) >= 2,
+                    "insight": (
+                        "EBIT has been insufficient to cover interest for multiple years."
+                        if len(ebit_below) >= 2
+                        else "EBIT consistently exceeds interest expense, indicating sufficient accounting-level debt servicing capacity."
+                    ),
+                },
+            },
+            "cfo_vs_interest": {
+                "values": {"cfo": ym("cfo"), "interest": ym("interest")},
+                "comparison": {
+                    "years_below": cfo_below,
+                    "rule_triggered": len(cfo_below) >= 2,
+                    "insight": (
+                        "Operating cash flows failed to cover interest obligations for multiple years, indicating reliance on refinancing."
+                        if len(cfo_below) >= 2
+                        else "Operating cash flows are sufficient to service interest."
+                    ),
+                },
+            },
+            "debt_vs_profit": {
+                "values": {"net_debt": ym("net_debt"), "net_profit": ym("net_profit")},
+                "comparison": {
+                    "overlap_years": debt_profit,
+                    "rule_triggered": len(debt_profit) >= 2,
+                    "insight": (
+                        "Debt increased while profitability weakened, signaling a developing debt spiral."
+                        if len(debt_profit) >= 2
+                        else "Debt and profitability trends remain aligned."
+                    ),
+                },
+            },
+        }
+
+        # ============================
+        # 3.2 WINDOW DRESSING
+        # ============================
+        cash_spike, profit_spike, recv_profit, one_off = [], [], [], []
+        for i in range(1, len(years_sorted)):
+            y, p = years_sorted[i], years_sorted[i - 1]
+
+            if yearly[p]["cash"] > 0 and (yearly[y]["cash"] - yearly[p]["cash"]) / yearly[p]["cash"] > 0.30:
+                cash_spike.append(y)
+            if yearly[p]["net_profit"] > 0 and (yearly[y]["net_profit"] - yearly[p]["net_profit"]) / yearly[p]["net_profit"] > 0.25:
+                profit_spike.append(y)
+            if yearly[y]["receivables"] < yearly[p]["receivables"] and yearly[y]["net_profit"] > yearly[p]["net_profit"]:
+                recv_profit.append(y)
+            if yearly[y].get("other_income", 0) and yearly[y]["net_profit"] != 0:
+                if abs(yearly[y]["other_income"]) / abs(yearly[y]["net_profit"]) > 0.20:
+                    one_off.append(y)
+
+        window_dressing = {
+            "cash_spike": {
+                "comparison": {
+                    "flagged_years": cash_spike,
+                    "rule_triggered": bool(cash_spike),
+                    "insight": (
+                        "Sudden year-end cash spikes suggest possible window dressing."
+                        if cash_spike
+                        else "No abnormal year-end cash spikes were observed."
+                    ),
+                }
+            },
+            "profit_spike": {
+                "comparison": {
+                    "flagged_years": profit_spike,
+                    "rule_triggered": bool(profit_spike),
+                    "insight": (
+                        "Sharp profit increases without proportional revenue growth may indicate earnings beautification."
+                        if profit_spike
+                        else "Profit growth appears consistent with business performance."
+                    ),
+                }
+            },
+            "one_off_income": {
+                "comparison": {
+                    "flagged_years": one_off,
+                    "rule_triggered": bool(one_off),
+                    "insight": (
+                        "One-off income materially impacted reported profits."
+                        if one_off
+                        else "One-off income did not materially distort reported profits."
+                    ),
+                }
+            },
+            "receivable_decline_profit_spike": {
+                "comparison": {
+                    "flagged_years": recv_profit,
+                    "rule_triggered": bool(recv_profit),
+                    "insight": (
+                        "Profit growth alongside receivable decline suggests possible cosmetic working-capital management."
+                        if recv_profit
+                        else "Receivables and profit trends remain consistent."
+                    ),
+                }
+            },
+            "last_quarter_volatility": {
+                "status": "NOT_AVAILABLE",
+                "insight": "Quarterly financial data is not available, preventing volatility assessment."
+            },
+        }
+
+        # ============================
+        # 3.3 ASSET STRIPPING
+        # ============================
+        asset_decline, debt_asset = [], []
+        for i in range(1, len(years_sorted)):
+            y, p = years_sorted[i], years_sorted[i - 1]
+            if yearly[y]["fixed_assets"] < yearly[p]["fixed_assets"]:
+                asset_decline.append(y)
+            if yearly[y]["net_debt"] > yearly[p]["net_debt"] and yearly[y]["fixed_assets"] < yearly[p]["fixed_assets"]:
+                debt_asset.append(y)
+
+        asset_stripping = {
+            "fixed_asset_decline": {
+                "comparison": {
+                    "flagged_years": asset_decline,
+                    "rule_triggered": len(asset_decline) >= 2,
+                    "insight": (
+                        "Sustained multi-year decline in fixed assets indicates potential asset stripping."
+                        if len(asset_decline) >= 2
+                        else "No sustained multi-year decline in fixed assets was observed."
+                    ),
+                }
+            },
+            "debt_vs_assets": {
+                "comparison": {
+                    "flagged_years": debt_asset,
+                    "rule_triggered": len(debt_asset) >= 2,
+                    "insight": (
+                        "Debt increased while assets shrank, indicating asset base hollowing."
+                        if len(debt_asset) >= 2
+                        else "Debt movements remain broadly aligned with asset levels."
+                    ),
+                }
+            },
+            "dividends_vs_assets": {
+                "status": "NOT_APPLICABLE",
+                "insight": "Dividend payouts are not significant enough to indicate asset stripping.",
+            },
+            "promoter_extraction": {
+                "status": "DATA_LIMITED",
+                "insight": "No direct data on promoter withdrawals beyond related-party disclosures.",
+            },
+        }
+
+        # ============================
+        # 3.4 LOAN EVERGREENING
+        # ============================
+        rollover, debt_ebitda = [], []
+        for i in range(1, len(years_sorted)):
+            y, p = years_sorted[i], years_sorted[i - 1]
+            if yearly[y]["proceeds_from_borrowings"] > yearly[y]["repayment_of_borrowings"]:
+                rollover.append(y)
+            if yearly[y]["net_debt"] > yearly[p]["net_debt"] and yearly[y]["ebitda"] <= yearly[p]["ebitda"]:
+                debt_ebitda.append(y)
+
+        loan_evergreening = {
+            "loan_rollover": {
+                "values": {
+                    "borrowings_proceeds": ym("proceeds_from_borrowings"),
+                    "borrowings_repaid": ym("repayment_of_borrowings"),
+                },
+                "comparison": {
+                    "flagged_years": rollover,
+                    "rule_triggered": bool(rollover),
+                    "insight": (
+                        "New borrowings consistently exceeded repayments, indicating refinancing-driven debt servicing."
+                        if rollover
+                        else "Borrowings appear to be repaid in a disciplined manner."
+                    ),
+                },
+            },
+            "debt_vs_ebitda": {
+                "values": {"net_debt": ym("net_debt"), "ebitda": ym("ebitda")},
+                "comparison": {
+                    "overlap_years": debt_ebitda,
+                    "rule_triggered": len(debt_ebitda) >= 2,
+                    "insight": (
+                        "Debt increased while EBITDA stagnated, indicating evergreening risk."
+                        if len(debt_ebitda) >= 2
+                        else "Debt growth has largely been supported by EBITDA expansion."
+                    ),
+                },
+            },
+            "principal_repayment": {
+                "status": "NOT_COMPUTABLE",
+                "insight": "Short-term and long-term principal repayment split is not disclosed.",
+            },
+            "interest_capitalization": {
+                "status": "NOT_COMPUTABLE",
+                "insight": "No disclosure of interest capitalization into assets or CWIP.",
+            },
+        }
+
+        # ============================
+        # 3.5 CIRCULAR TRADING
+        # ============================
+        sales_cfo, recv_rev = [], []
+        for i in range(1, len(years_sorted)):
+            y, p = years_sorted[i], years_sorted[i - 1]
+            if yearly[y]["revenue"] > yearly[p]["revenue"] and yearly[y]["cfo"] < yearly[p]["cfo"]:
+                sales_cfo.append(y)
+            if (yearly[y]["receivables"] - yearly[p]["receivables"]) > (yearly[y]["revenue"] - yearly[p]["revenue"]):
+                recv_rev.append(y)
+
+        circular_trading = {
+            "sales_up_cfo_down": {
+                "comparison": {
+                    "flagged_years": sales_cfo,
+                    "rule_triggered": bool(sales_cfo),
+                    "insight": (
+                        "Revenue growth without operating cash flow support suggests potential revenue inflation."
+                        if sales_cfo
+                        else "Revenue growth is supported by operating cash flows."
+                    ),
+                }
+            },
+            "receivables_vs_revenue": {
+                "comparison": {
+                    "flagged_years": recv_rev,
+                    "rule_triggered": bool(recv_rev),
+                    "insight": (
+                        "Receivables increased faster than revenue, indicating aggressive revenue recognition."
+                        if recv_rev
+                        else "Receivables growth is aligned with revenue."
+                    ),
+                }
+            },
+            "rpt_sales_spike": {
+                "status": "DATA_LIMITED",
+                "insight": "Insufficient related-party sales data to assess abnormal spikes.",
+            },
+            "rpt_receivables_high": {
+                "status": "DATA_LIMITED",
+                "insight": "Related-party receivable disclosure is insufficient for threshold analysis.",
+            },
+            "rpt_balance_rising": {
+                "status": "DATA_LIMITED",
+                "insight": "Long-term trend in related-party balances cannot be reliably established.",
+            },
+        }
+
+        return {
+            "zombie_company": zombie_company,
+            "window_dressing": window_dressing,
+            "asset_stripping": asset_stripping,
+            "loan_evergreening": loan_evergreening,
+            "circular_trading": circular_trading,
+        }
     
     def _get_trend_fields(self) -> Dict[str, str]:
         """Get fields to track for trends based on module type"""
+        # If the module explicitly defines `detailed_trend_fields` in YAML,
+        # respect it even when it's empty (allows modules to opt out).
+        if "detailed_trend_fields" in (self.config or {}):
+            config_fields = self.config.get("detailed_trend_fields")
+            if isinstance(config_fields, dict):
+                return {str(k): str(v) for k, v in config_fields.items()}
+
         if self.module_id == "borrowings":
             return {
                 "short_term_debt": "Short Term Debt",
@@ -1235,14 +2061,72 @@ Keep the analysis concise but insightful.
                 "pat": "PAT",
                 "ebitda": "EBITDA"
             }
+
+    def _compute_yoy_map_pct(self, newest_first: List[Optional[float]]) -> Dict[str, Optional[float]]:
+        """Compute YoY % changes for a newest-first series using labels Y_vs_Y-1, etc."""
+        yoy: Dict[str, Optional[float]] = {}
+        for idx in range(len(newest_first) - 1):
+            curr = newest_first[idx]
+            prev = newest_first[idx + 1]
+            left = "Y" if idx == 0 else f"Y-{idx}"
+            right = f"Y-{idx+1}"
+            key = f"{left}_vs_{right}"
+            if prev in (None, 0) or curr is None:
+                yoy[key] = None
+            else:
+                yoy[key] = round(((curr - prev) / abs(prev)) * 100, 2)
+        return yoy
+
+    def _build_values_dict(self, newest_first: List[Optional[float]]) -> Dict[str, Optional[float]]:
+        out: Dict[str, Optional[float]] = {}
+        for i, v in enumerate(newest_first):
+            out["Y" if i == 0 else f"Y-{i}"] = v
+        return out
+
+    def _generate_recv_vs_revenue_insight(
+        self,
+        recv_yoy: Dict[str, Optional[float]],
+        rev_yoy: Dict[str, Optional[float]],
+        ratio_list: List[Optional[float]],
+    ) -> str:
+        recv_vals = [v for v in recv_yoy.values() if v is not None]
+        rev_vals = [v for v in rev_yoy.values() if v is not None]
+        ratio_vals = [v for v in ratio_list if v is not None]
+
+        if not recv_vals or not rev_vals:
+            return "Insufficient data for receivables vs revenue analysis."
+
+        avg_recv = sum(recv_vals) / len(recv_vals)
+        avg_rev = sum(rev_vals) / len(rev_vals)
+        avg_ratio = (sum(ratio_vals) / len(ratio_vals)) if ratio_vals else None
+        spread = avg_recv - avg_rev
+
+        # avg_recv/avg_rev are YoY% already.
+        spread_pct = round(spread, 2)
+
+        if avg_recv > 0 and avg_rev < 0:
+            return f"Receivables rising while revenue falling — major collection stress (spread: {spread_pct} pp)."
+        if spread > 10:
+            return f"Receivables growing much faster than revenue — collection risk increasing (spread: {spread_pct} pp)."
+        if 3 < spread <= 10:
+            return f"Receivables slightly outpacing revenue (spread: {spread_pct} pp). Monitor working capital."
+        if -3 <= spread <= 3:
+            return "Receivables growth aligned with revenue — stable collection efficiency."
+        if spread < -3:
+            return "Receivables growing slower than revenue — collection efficiency improving."
+        if avg_ratio is not None:
+            return f"Receivables vs revenue trend appears mixed (avg receivables/revenue: {avg_ratio:.2f})."
+        return "Receivables vs revenue trend appears mixed."
     
     def _generate_trend_insight(self, metric_name: str, values: Dict[str, float], 
                                 yoy_growth: Dict[str, float]) -> str:
         """Generate insight text for a trend"""
         if not yoy_growth:
             return f"Insufficient data for {metric_name} trend analysis."
-        
-        growth_values = list(yoy_growth.values())
+
+        growth_values = [v for v in yoy_growth.values() if v is not None]
+        if not growth_values:
+            return f"Insufficient data for {metric_name} trend analysis."
         avg_growth = sum(growth_values) / len(growth_values)
         
         # Determine pattern
@@ -1288,6 +2172,19 @@ Keep the analysis concise but insightful.
                 "revenue_cagr": "revenue",
                 "finance_cost_cagr": "finance_cost"
             }
+        elif self.module_id == "quality_of_earnings":
+            agg_mapping = {
+                "ocf_cagr": "operating_cash_flow",
+                "net_income_cagr": "net_income",
+                "receivables_cagr": "receivables",
+                "revenue_cagr": "revenue",
+            }
+        elif self.module_id == "asset_intangible_quality":
+            agg_mapping = {
+                "intangible_cagr": "intangible_assets",
+                "revenue_cagr": "revenue",
+                "operating_asset_cagr": "gross_block",
+            }
         else:
             # Generic mapping for other modules
             agg_mapping = {
@@ -1303,7 +2200,7 @@ Keep the analysis concise but insightful.
             end_val = historical_data[-1].get(field, 0)
             
             # Skip if start is 0 or None, or if end is 0 or None
-            if not start_val or start_val <= 0 or not end_val:
+            if not start_val or start_val <= 0 or not end_val or end_val <= 0:
                 cagr_metrics[cagr_name] = None
                 continue
             
@@ -1317,6 +2214,12 @@ Keep the analysis concise but insightful.
                 cagr_metrics[cagr_name] = round(cagr, 2)
             except (ZeroDivisionError, ValueError):
                 cagr_metrics[cagr_name] = None
+
+        # Derived comparison CAGR (only when both are available)
+        if self.module_id == "asset_intangible_quality":
+            ic = cagr_metrics.get("intangible_cagr")
+            rc = cagr_metrics.get("revenue_cagr")
+            cagr_metrics["intangible_cagr_vs_revenue_cagr"] = (round(ic - rc, 2) if ic is not None and rc is not None else None)
         
         return cagr_metrics
     
