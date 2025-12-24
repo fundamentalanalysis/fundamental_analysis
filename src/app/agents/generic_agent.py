@@ -206,20 +206,21 @@ class GenericAgent:
         # ROE calculation using average equity
         avg_equity = None
         if prior_net_worth is not None:
-            avg_equity = (net_worth + prior_net_worth) / 2 if prior_net_worth not in (None, 0) else net_worth
+            avg_equity = self._safe_div(pat, avg_equity)((net_worth + prior_net_worth) / 2) if prior_net_worth not in (None, 0) else net_worth
         else:
             avg_equity = net_worth if net_worth not in (None, 0) else None
-        
+        print(f"DEBUG: net_worth={net_worth}, prior_net_worth={prior_net_worth}, avg_equity={avg_equity}")
+        print(f"DEBUG: Calculating ROE with pat={pat}, avg_equity={avg_equity}")
         roe = self._safe_div(pat, avg_equity) if avg_equity not in (None, 0) else None
         
-        # Growth rates vs previous year
-        equity_growth = None
-        if prior_share_capital not in (None, 0):
-            equity_growth = self._safe_div(share_capital - prior_share_capital, prior_share_capital)
+        # # Growth rates vs previous year
+        # equity_growth = None
+        # if prior_share_capital not in (None, 0):
+        #     equity_growth = self._safe_div(share_capital - prior_share_capital, prior_share_capital)
         
-        debt_growth = None
-        if prior_debt not in (None, 0):
-            debt_growth = self._safe_div(debt - prior_debt, prior_debt)
+        # debt_growth = None
+        # if prior_debt not in (None, 0):
+        #     debt_growth = self._safe_div(debt - prior_debt, prior_debt)
         
         # Retained earnings growth
         retained_yoy = None
@@ -241,8 +242,8 @@ class GenericAgent:
             "dilution_pct": dilution_pct,
             "roe": roe,
             "avg_equity": avg_equity,
-            "equity_growth_rate": equity_growth,
-            "debt_growth_rate": debt_growth,
+            # "equity_growth_rate": equity_growth,
+            # "debt_growth_rate": debt_growth,
             "debt_to_equity": self._safe_div(debt, net_worth),
             "equity_ratio": self._safe_div(net_worth, net_worth + debt),
         }
@@ -757,27 +758,35 @@ class GenericAgent:
         
         return trends
     
-    def _calculate_trend_comparison_metrics(self, historical_data: List[Dict[str, float]]) -> Dict[str, float]:
+    def _calculate_module_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         """
-        Calculate comparison metrics based on trends (for borrowings module).
+        UNIFIED trend calculation method that reads trend logic from YAML config.
+        Replaces module-specific _calculate_equity_funding_trends() and _calculate_trend_comparison_metrics().
         
-        Returns dict with:
-        - debt_vs_ebitda_cagr: debt_cagr - ebitda_cagr (positive = debt growing faster)
-        - lt_debt_vs_revenue: lt_debt_cagr - revenue_cagr (for A3 rule)
-        - finance_cost_vs_debt: finance_cost_cagr - debt_cagr (for C2 rule)
+        This method is driven by the trend_metrics section in the module's YAML config:
+        - cagr_fields: List of fields to calculate CAGR for
+        - yoy_fields: List of fields to track YoY growth for
+        - comparison_metrics: Dict of comparison metric names and field pairs to compare
+        - special_trends: List of special trend calculations (dilution, declining trends, etc)
+        
+        Args:
+            historical_data: List of dicts with year and metrics (oldest first)
+            
+        Returns:
+            Dict with CAGR metrics, YoY growth arrays, and special trend metrics
         """
         if not historical_data or len(historical_data) < 2:
             return {}
         
+        trend_config = self.config.get("trend_metrics", {})
+        if not trend_config:
+            return {}
+        
         n = len(historical_data)
+        results = {}
         
-        # Calculate total_debt if not present
-        for d in historical_data:
-            if "total_debt" not in d or d.get("total_debt", 0) == 0:
-                d["total_debt"] = (d.get("short_term_debt") or 0) + (d.get("long_term_debt") or 0)
-        
+        # Helper: Compute CAGR safely
         def compute_cagr(start: float, end: float, years: int) -> Optional[float]:
-            """Compute CAGR safely, handling None and zero values"""
             if start in (None, 0) or end in (None, 0) or start <= 0 or years <= 0:
                 return None
             try:
@@ -785,156 +794,95 @@ class GenericAgent:
             except (ZeroDivisionError, ValueError):
                 return None
         
-        # Helper to get field from historical data safely
+        # Helper: Get field values from historical data
         def get_field_values(field: str) -> List[Optional[float]]:
             return [d.get(field) for d in historical_data]
         
-        # Get CAGR for each metric
-        debt_values = get_field_values("total_debt")
-        ebitda_values = get_field_values("ebitda")
-        lt_debt_values = get_field_values("long_term_debt")
-        revenue_values = get_field_values("revenue")
-        finance_cost_values = get_field_values("finance_cost")
-        st_debt_values = get_field_values("short_term_debt")
+        # ===== 1. CALCULATE CAGR METRICS =====
+        cagr_fields = trend_config.get("cagr_fields", [])
+        cagr_values = {}  # Store computed CAGRs for later comparison metrics
         
-        debt_cagr = compute_cagr(debt_values[0], debt_values[-1], n - 1)
-        ebitda_cagr = compute_cagr(ebitda_values[0], ebitda_values[-1], n - 1)
-        lt_debt_cagr = compute_cagr(lt_debt_values[0], lt_debt_values[-1], n - 1)
-        revenue_cagr = compute_cagr(revenue_values[0], revenue_values[-1], n - 1)
-        finance_cost_cagr = compute_cagr(finance_cost_values[0], finance_cost_values[-1], n - 1)
-        st_debt_cagr = compute_cagr(st_debt_values[0], st_debt_values[-1], n - 1)
+        for field in cagr_fields:
+            values = get_field_values(field)
+            if values[0] and values[0] > 0 and values[-1]:
+                cagr = compute_cagr(values[0], values[-1], n - 1)
+                cagr_field_name = f"{field}_cagr"
+                if cagr is not None:
+                    cagr_values[field] = cagr  # Store for comparison metrics
+                    results[cagr_field_name] = round(cagr, 2)
+                else:
+                    results[cagr_field_name] = None
         
-        # Calculate comparison metrics for rules
-        debt_vs_ebitda = None
-        if debt_cagr is not None and ebitda_cagr is not None:
-            debt_vs_ebitda = debt_cagr - ebitda_cagr  # Positive = debt growing faster (RED)
+        # ===== 2. CALCULATE COMPARISON METRICS =====
+        # Format: metric_name: [field1, field2] => field1_cagr - field2_cagr
+        comparison_metrics = trend_config.get("comparison_metrics", {})
         
-        lt_debt_vs_revenue = None
-        if lt_debt_cagr is not None and revenue_cagr is not None:
-            lt_debt_vs_revenue = lt_debt_cagr - revenue_cagr  # Positive = LT debt growing faster than revenue
+        for comp_metric_name, field_pair in comparison_metrics.items():
+            if isinstance(field_pair, list) and len(field_pair) == 2:
+                field1, field2 = field_pair
+                cagr1 = cagr_values.get(field1)
+                cagr2 = cagr_values.get(field2)
+                
+                if cagr1 is not None and cagr2 is not None:
+                    results[comp_metric_name] = round(cagr1 - cagr2, 2)
+                else:
+                    results[comp_metric_name] = 0
         
-        finance_cost_vs_debt = None
-        if finance_cost_cagr is not None and debt_cagr is not None:
-            finance_cost_vs_debt = finance_cost_cagr - debt_cagr  # Positive = interest costs growing faster
+        # ===== 3. CALCULATE YoY GROWTH ARRAYS =====
+        yoy_fields = trend_config.get("yoy_fields", [])
         
-        return {
-            "debt_vs_ebitda_cagr": debt_vs_ebitda or 0,
-            "lt_debt_vs_revenue": lt_debt_vs_revenue or 0,
-            "finance_cost_vs_debt": finance_cost_vs_debt or 0,
-            "debt_cagr": debt_cagr or 0,
-            "ebitda_cagr": ebitda_cagr or 0,
-            "lt_debt_cagr": lt_debt_cagr or 0,
-            "st_debt_cagr": st_debt_cagr or 0,
-            "revenue_cagr": revenue_cagr or 0,
-            "finance_cost_cagr": finance_cost_cagr or 0,
-        }
-    
-    def _calculate_equity_funding_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
-        """
-        Calculate comprehensive trend metrics for equity_funding_mix module.
-        Includes CAGR, YoY growth, trend detection, and dilution events.
-        
-        Args:
-            historical_data: List of dicts with year and equity metrics (oldest first)
+        for field in yoy_fields:
+            yoy_array = []
+            for i in range(len(historical_data) - 1):
+                prev_val = historical_data[i].get(field)
+                curr_val = historical_data[i + 1].get(field)
+                
+                if prev_val is not None and prev_val != 0 and curr_val is not None:
+                    yoy = ((curr_val - prev_val) / abs(prev_val)) * 100
+                    yoy_array.append(yoy)
+                else:
+                    yoy_array.append(None)
             
-        Returns:
-            Dict with retained_cagr, roe_cagr, payout_cagr, etc.
-        """
-        if not historical_data or len(historical_data) < 2:
-            return {}
+            yoy_field_name = f"{field}_yoy_growth"
+            results[yoy_field_name] = yoy_array
         
-        # Build yearly dict keyed by year
+        # ===== 4. HANDLE SPECIAL TRENDS (module-specific logic) =====
+        special_trends = trend_config.get("special_trends", [])
+        
+        # Build yearly dict for special trend calculations
         yearly = {}
         for d in historical_data:
             year = d.get("year")
             if year:
                 yearly[year] = d
         
-        if len(yearly) < 2:
-            return {}
+        if len(yearly) >= 2 and special_trends:
+            years = sorted(yearly.keys())
+            
+            # Special trend: dilution_pct detection
+            if "dilution_pct" in special_trends:
+                dilution_events = []
+                for year in years:
+                    dilution = yearly[year].get("dilution_pct")
+                    if dilution is not None and dilution > 0:
+                        dilution_events.append({
+                            "year": year,
+                            "dilution_pct": dilution
+                        })
+                results["dilution_events"] = dilution_events
+            
+            # Special trend: declining trend detection (3-year consecutive decline)
+            if "retained_declining" in special_trends:
+                retained_series = [yearly[y].get("retained_earnings") for y in years]
+                retained_declining = self._has_consecutive_trend(retained_series, "down", 3)
+                results["retained_declining"] = retained_declining
+            
+            if "roe_declining" in special_trends:
+                roe_series = [yearly[y].get("roe") for y in years]
+                roe_declining = self._has_consecutive_trend(roe_series, "down", 3)
+                results["roe_declining"] = roe_declining
         
-        years = sorted(yearly.keys())
-        first_year = years[0]
-        last_year = years[-1]
-        num_years = len(years)
-        
-        # Calculate CAGRs
-        retained_cagr = self._compute_cagr(
-            yearly[first_year].get("retained_earnings"),
-            yearly[last_year].get("retained_earnings"),
-            num_years - 1
-        )
-        roe_cagr = self._compute_cagr(
-            yearly[first_year].get("roe"),
-            yearly[last_year].get("roe"),
-            num_years - 1
-        )
-        payout_cagr = self._compute_cagr(
-            yearly[first_year].get("payout_ratio") or 0.01,
-            yearly[last_year].get("payout_ratio") or 0.01,
-            num_years - 1
-        )
-        pat_cagr = self._compute_cagr(
-            yearly[first_year].get("pat"),
-            yearly[last_year].get("pat"),
-            num_years - 1
-        )
-        equity_cagr = self._compute_cagr(
-            yearly[first_year].get("share_capital"),
-            yearly[last_year].get("share_capital"),
-            num_years - 1
-        )
-        debt_cagr = self._compute_cagr(
-            yearly[first_year].get("debt"),
-            yearly[last_year].get("debt"),
-            num_years - 1
-        )
-        
-        # YoY growth arrays and dilution detection
-        payout_yoy = []
-        roe_yoy = []
-        dilution_events = []
-        
-        for prev_year, curr_year in zip(years, years[1:]):
-            prev = yearly[prev_year]
-            curr = yearly[curr_year]
-            payout_yoy.append(self._compute_yoy(
-                curr.get("payout_ratio"),
-                prev.get("payout_ratio")
-            ))
-            roe_yoy.append(self._compute_yoy(
-                curr.get("roe"),
-                prev.get("roe")
-            ))
-            # Track dilution events
-            dilution = curr.get("dilution_pct")
-            if dilution is not None and dilution > 0:
-                dilution_events.append({
-                    "year": curr.get("year"),
-                    "dilution_pct": dilution
-                })
-        
-        # Trend detection (3-year declining trend)
-        retained_series = self._series(years, yearly, "retained_earnings")
-        payout_series = self._series(years, yearly, "payout_ratio")
-        roe_series = self._series(years, yearly, "roe")
-        
-        retained_declining = self._has_consecutive_trend(retained_series, "down", 3)
-        roe_declining = self._has_consecutive_trend(roe_series, "down", 3)
-        
-        return {
-            "retained_cagr": retained_cagr,
-            "roe_cagr": roe_cagr,
-            "payout_cagr": payout_cagr,
-            "pat_cagr": pat_cagr,
-            "equity_cagr": equity_cagr,
-            "debt_cagr": debt_cagr,
-            "payout_yoy_growth": payout_yoy,
-            "roe_yoy_growth": roe_yoy,
-            "dilution_events": dilution_events,
-            "retained_declining": retained_declining,
-            "roe_declining": roe_declining,
-        }
+        return results
     
     # -----------------------------------------------------------------------
     # SCORING
@@ -1054,6 +1002,19 @@ Keep the analysis concise but insightful.
         prepared = dict(data)  # Copy input data
         
         computed_fields = self.config.get("computed_fields", {})
+        required_fields = self.config.get("input_fields", [])
+        
+        # Build a safe namespace for expression evaluation
+        # Use a custom defaultdict so any undefined field defaults to 0
+        from collections import defaultdict
+        safe_dict_base = defaultdict(lambda: 0)
+        
+        # Populate with required fields (ensuring all are present)
+        for field in required_fields:
+            safe_dict_base[field] = prepared.get(field) or 0
+        
+        # Populate with all fields from input data
+        safe_dict_base.update({k: v or 0 for k, v in prepared.items()})
         
         # Apply field computations
         for target_field, computation_rules in computed_fields.items():
@@ -1064,20 +1025,19 @@ Keep the analysis concise but insightful.
             # Try each computation rule in order (fallback support)
             for rule in computation_rules:
                 try:
-                    # Build safe context with None values converted to 0
-                    safe_dict = {k: v or 0 for k, v in prepared.items()}
-                    
                     # Evaluate expression with limited builtins
-                    computed_value = eval(rule, {"__builtins__": {}}, safe_dict)
+                    # The defaultdict will provide 0 for any undefined fields
+                    computed_value = eval(rule, {"__builtins__": {}}, safe_dict_base)
                     prepared[target_field] = computed_value
+                    safe_dict_base[target_field] = computed_value  # Update for next computations
                     break  # Use first successful rule
                     
-                except (KeyError, NameError, TypeError, ZeroDivisionError, SyntaxError):
+                except (KeyError, TypeError, ZeroDivisionError, SyntaxError, ValueError) as e:
                     # Rule failed, try next one
+                    # NameError is not caught here because we're using defaultdict
                     continue
         
-        # Ensure all required fields exist (default to 0)
-        required_fields = self.config.get("input_fields", [])
+        # Ensure all required fields exist in prepared (default to 0)
         for field in required_fields:
             if prepared.get(field) is None:
                 prepared[field] = 0.0
@@ -1115,23 +1075,27 @@ Keep the analysis concise but insightful.
         # 1. Calculate metrics
         metrics = self.calculate_metrics(prepared_data)
         
-        # 2. For borrowings module, calculate trend-based comparison metrics
-        if self.module_id == "borrowings" and prepared_historical and len(prepared_historical) >= 2:
-            trend_metrics = self._calculate_trend_comparison_metrics(prepared_historical)
-            metrics.update(trend_metrics)
-        
-        # 2b. For equity_funding_mix, calculate comprehensive trend metrics
-        equity_trends = {}
-        if self.module_id == "equity_funding_mix" and prepared_historical and len(prepared_historical) >= 2:
-            # Compute metrics for each historical year
-            historical_with_metrics = []
-            for h_data in prepared_historical:
-                h_metrics = self._calc_equity_funding_metrics(h_data)
-                h_metrics["year"] = h_data.get("year")
-                historical_with_metrics.append(h_metrics)
+        # 2. UNIFIED TREND CALCULATION (reads from YAML trend_metrics config)
+        # This single method replaces:
+        #   - _calculate_trend_comparison_metrics() for borrowings
+        #   - _calculate_equity_funding_trends() for equity_funding_mix
+        #   - Custom logic for other modules
+        module_trends = {}
+        if prepared_historical and len(prepared_historical) >= 2:
+            # Special handling for equity_funding_mix: compute metrics for each historical year first
+            if self.module_id == "equity_funding_mix":
+                historical_with_metrics = []
+                for h_data in prepared_historical:
+                    h_metrics = self._calc_equity_funding_metrics(h_data)
+                    h_metrics["year"] = h_data.get("year")
+                    historical_with_metrics.append(h_metrics)
+                
+                module_trends = self._calculate_module_trends(historical_with_metrics)
+            else:
+                # For other modules, use prepared historical data directly
+                module_trends = self._calculate_module_trends(prepared_historical)
             
-            equity_trends = self._calculate_equity_funding_trends(historical_with_metrics)
-            metrics.update(equity_trends)
+            metrics.update(module_trends)
         
         # 3. Evaluate rules with year
         rules_results = self.evaluate_rules(metrics, year)
@@ -1176,7 +1140,8 @@ Keep the analysis concise but insightful.
         # 10. Generate LLM narrative if requested
         narrative = None
         if generate_llm_narrative:
-            narrative = self.generate_narrative(metrics, rules_results, detailed_trends, score)
+            # narrative = self.generate_narrative(metrics, rules_results, detailed_trends, score)
+            narrative = "[LLM narrative generation is currently disabled.]"
         
         return ModuleOutput(
             module=self.name,
@@ -1298,35 +1263,60 @@ Keep the analysis concise but insightful.
         return f"{metric_name} shows {pattern} pattern (avg: {avg_growth:.1f}%)."
     
     def _calculate_cagr_metrics(self, historical_data: List[Dict[str, float]]) -> Dict[str, float]:
-        """Calculate CAGR for key metrics"""
+        """Calculate CAGR for key metrics, aggregated by module"""
         if not historical_data or len(historical_data) < 2:
             return {}
         
         cagr_metrics = {}
         n = len(historical_data)
         
-        # Fields to calculate CAGR for
-        cagr_fields = {
-            "total_debt": "debt_cagr",
-            "ebitda": "ebitda_cagr",
-            "finance_cost": "finance_cost_cagr",
-            "revenue": "revenue_cagr",
-            "pat": "pat_cagr",
-            "net_worth": "networth_cagr"
-        }
+        # Module-specific CAGR aggregation - maps output names to field names
+        if self.module_id == "equity_funding_mix":
+            # For equity module, aggregate from specific fields
+            agg_mapping = {
+                "equity_cagr": "share_capital",  # Proxy for equity
+                "debt_cagr": "debt",
+                "retained_cagr": "retained_earnings",
+                "roe_cagr": "roe",
+                "pat_cagr": "pat"
+            }
+        elif self.module_id == "borrowings":
+            # For borrowings module
+            agg_mapping = {
+                "debt_cagr": "total_debt",
+                "ebitda_cagr": "ebitda",
+                "revenue_cagr": "revenue",
+                "finance_cost_cagr": "finance_cost"
+            }
+        else:
+            # Generic mapping for other modules
+            agg_mapping = {
+                "revenue_cagr": "revenue",
+                "pat_cagr": "pat",
+                "ebitda_cagr": "ebitda",
+                "debt_cagr": "total_debt"
+            }
         
-        # Calculate total_debt if not present
-        for d in historical_data:
-            if "total_debt" not in d or d.get("total_debt", 0) == 0:
-                d["total_debt"] = d.get("short_term_debt", 0) + d.get("long_term_debt", 0)
-        
-        for field, cagr_name in cagr_fields.items():
+        # Calculate CAGRs
+        for cagr_name, field in agg_mapping.items():
             start_val = historical_data[0].get(field, 0)
             end_val = historical_data[-1].get(field, 0)
             
-            if start_val and start_val > 0 and end_val:
+            # Skip if start is 0 or None, or if end is 0 or None
+            if not start_val or start_val <= 0 or not end_val:
+                cagr_metrics[cagr_name] = None
+                continue
+            
+            # For ROE with mixed signs, skip CAGR
+            if field == "roe" and start_val * end_val <= 0:
+                cagr_metrics[cagr_name] = None
+                continue
+            
+            try:
                 cagr = ((end_val / start_val) ** (1 / (n - 1)) - 1) * 100
                 cagr_metrics[cagr_name] = round(cagr, 2)
+            except (ZeroDivisionError, ValueError):
+                cagr_metrics[cagr_name] = None
         
         return cagr_metrics
     

@@ -56,6 +56,24 @@ modules:
       maturity_gt_3y_pct: "total_debt_maturing_gt_3y / total_debt"
       cwip_to_assets: "cwip / (total_equity + total_debt)"
     trends: [debt_cagr, ebitda_cagr, lt_debt_cagr, revenue_cagr, finance_cost_cagr, st_debt_yoy_growth]
+    trend_metrics:
+      # Which fields to calculate CAGR for
+      cagr_fields:
+        - total_debt
+        - ebitda
+        - long_term_debt
+        - revenue
+        - finance_cost
+        - short_term_debt
+      # Which fields to track YoY growth for
+      yoy_fields:
+        - de_ratio
+        - debt_ebitda
+      # Comparison metrics: metric_name = [field1_cagr - field2_cagr]
+      comparison_metrics:
+        debt_vs_ebitda_cagr: [total_debt, ebitda]  # positive = debt growing faster (RED in rule A1)
+        lt_debt_vs_revenue: [long_term_debt, revenue]  # positive = LT debt growing faster than revenue
+        finance_cost_vs_debt: [finance_cost, total_debt]  # positive = finance costs growing faster
     rules:
       # A. Debt Growth & Trend Rules
       - id: A1
@@ -289,6 +307,7 @@ modules:
       debt: ["short_term_debt + long_term_debt + (lease_liabilities or 0)"]
       share_capital: ["equity_capital or total_equity"]
       reserves_and_surplus: ["reserves or 0"]
+      retained_earnings: ["reserves_and_surplus"]
       net_worth: ["share_capital + reserves_and_surplus"]
       pat: ["net_profit"]
       dividends_paid: ["dividends_paid or 0"]
@@ -308,6 +327,24 @@ modules:
       debt_to_equity: "debt_equitymix / net_worth"
       equity_ratio: "net_worth / (net_worth + debt_equitymix)"
     trends: [retained_earnings_cagr, networth_cagr, pat_cagr, equity_cagr, debt_cagr]
+    trend_metrics:
+      # Which fields to calculate CAGR for
+      cagr_fields:
+        - retained_earnings
+        - roe
+        - payout_ratio
+        - pat
+        - share_capital
+        - debt
+      # Which fields to track YoY growth for
+      # yoy_fields:
+        # - payout_ratio
+        # - roe
+      # Special trend logic for this module (detected by field names)
+      special_trends:
+        - dilution_pct  # Track dilution events
+        - retained_declining  # Detect 3-year declining trend in retained earnings
+        - roe_declining  # Detect 3-year declining trend in ROE
     rules:
       - id: A1
         name: "Retained Earnings Growth"
