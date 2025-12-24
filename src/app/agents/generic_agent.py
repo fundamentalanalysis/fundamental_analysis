@@ -8,7 +8,7 @@ The module behavior is entirely driven by YAML config.
 No need for separate files per module.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel
 from datetime import datetime
 import math
@@ -39,7 +39,7 @@ class RuleResult(BaseModel):
 
 class TrendDetail(BaseModel):
     """Detailed trend with YoY breakdown"""
-    values: Dict[str, Optional[float]]  # {"Y": 100, "Y-1": 90, "Y-2": 80, ...}
+    values: Dict[str, Optional[Union[int, float]]]  # {"Y": 100, "Y-1": 90, "Y-2": 80, ...}
     yoy_growth_pct: Dict[str, Optional[float]]  # {"Y_vs_Y-1": 11.1, "Y-1_vs_Y-2": 12.5, ...}
     insight: str
 
@@ -344,19 +344,83 @@ class GenericAgent:
         }
     
     def _calc_liquidity_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate liquidity metrics"""
-        cash = data.get("cash_and_equivalents", 0)
-        securities = data.get("marketable_securities", 0)
-        ca = data.get("current_assets", 0)
-        cl = data.get("current_liabilities", 1)
-        inventory = data.get("inventory", 0)
-        daily_opex = data.get("daily_operating_expenses", 1)
-        
+        """Calculate liquidity metrics (updated).
+
+        Mirrors the reference logic:
+        - current_assets: investments + inventories + trade_receivables (computed upstream)
+        - current_liabilities: short_term_debt + other_liability_items (computed upstream)
+        - operating_cash_flow: profit_from_operations + working_capital_changes - direct_taxes (computed upstream)
+        - daily_operating_expenses: (expenses - depreciation)/365 (computed upstream)
+        """
+        cash = data.get("cash_and_equivalents") or 0.0
+        marketable_sec = data.get("marketable_securities") or 0.0
+        receivables = data.get("receivables")
+        if receivables is None:
+            receivables = data.get("trade_receivables")
+        receivables = receivables or 0.0
+
+        inventory = data.get("inventory")
+        if inventory is None:
+            inventory = data.get("inventories")
+        inventory = inventory or 0.0
+
+        current_assets = data.get("current_assets") or 0.0
+        current_liabilities = data.get("current_liabilities") or 0.0
+        short_term_debt = data.get("short_term_debt") or 0.0
+        total_debt = data.get("total_debt")
+        if total_debt is None:
+            total_debt = data.get("borrowings")
+        total_debt = total_debt or 0.0
+
+        ocf = data.get("operating_cash_flow")
+        if ocf is None:
+            ocf = data.get("cash_from_operating_activity")
+        ocf = ocf or 0.0
+
+        interest = data.get("interest_expense")
+        if interest is None:
+            interest = data.get("interest_paid_fin")
+        interest = interest or 0.0
+
+        daily_expenses = data.get("daily_operating_expenses")
+        if daily_expenses is None:
+            exp = data.get("expenses")
+            dep = data.get("depreciation")
+            if exp is not None:
+                daily_expenses = ((exp or 0.0) - (dep or 0.0)) / 365
+        daily_expenses = daily_expenses or 0.0
+
+        liquid_assets = cash + marketable_sec + receivables
+
         return {
-            "current_ratio": self._safe_div(ca, cl),
-            "quick_ratio": self._safe_div(ca - inventory, cl),
-            "cash_ratio": self._safe_div(cash + securities, cl),
-            "cash_coverage_days": self._safe_div(cash, daily_opex),
+            # Core ratios
+            "current_ratio": self._safe_div(current_assets, current_liabilities, default=None),
+            "quick_ratio": self._safe_div(current_assets - inventory, current_liabilities, default=None),
+            "cash_ratio": self._safe_div(cash, current_liabilities, default=None),
+
+            # Liquidity runway
+            "defensive_interval_ratio_days": self._safe_div(liquid_assets, daily_expenses, default=None),
+
+            # Cashflow coverage
+            "ocf_to_cl": self._safe_div(ocf, current_liabilities, default=None),
+            "ocf_to_total_debt": self._safe_div(ocf, total_debt, default=None),
+            "interest_coverage_ocf": self._safe_div(ocf, interest, default=None),
+            "cash_coverage_st_debt": self._safe_div(cash, short_term_debt, default=None),
+
+            # Key balances (requested names)
+            "cash": cash,
+            "marketable_securities": marketable_sec,
+
+            # Canonical fields retained for trend enrichment
+            "cash_and_equivalents": cash,
+            "receivables": receivables,
+            "inventory": inventory,
+            "current_assets": current_assets,
+            "current_liabilities": current_liabilities,
+            "short_term_debt": short_term_debt,
+            "total_debt": total_debt,
+            "operating_cash_flow": ocf,
+            "daily_operating_expenses": daily_expenses,
         }
     
     def _calc_working_capital_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
@@ -1184,6 +1248,11 @@ Keep the analysis concise but insightful.
             
             # Try each computation rule in order (fallback support)
             for rule in computation_rules:
+                # Avoid a common YAML pattern that includes the target field name as a "fallback".
+                # When inputs are missing, required fields default to 0 in the safe dict and this
+                # would short-circuit computed fields to 0.
+                if isinstance(rule, str) and rule.strip() == target_field:
+                    continue
                 try:
                     # Evaluate expression with limited builtins
                     # The defaultdict will provide 0 for any undefined fields
@@ -1277,6 +1346,10 @@ Keep the analysis concise but insightful.
                 required_for_detailed_trends,
             )
             detailed_trends = self._calculate_detailed_trends(historical_for_detailed_trends)
+
+            # Liquidity: compute YoY-latest fields from unrounded enriched series
+            if self.module_id == "liquidity":
+                metrics.update(self._calculate_liquidity_latest_yoy(historical_for_detailed_trends))
         
         # 5. Calculate CAGR trends for key_metrics
         cagr_trends = self._calculate_cagr_metrics(prepared_historical) if prepared_historical else {}
@@ -1291,6 +1364,26 @@ Keep the analysis concise but insightful.
         key_metrics = {"year": year} if year else {}
         key_metrics.update(metrics)
         key_metrics.update(cagr_trends)
+
+        # Liquidity: enforce the requested key_metrics contract
+        if self.module_id == "liquidity":
+            allowed = {
+                "year",
+                "cash",
+                "marketable_securities",
+                "current_ratio",
+                "quick_ratio",
+                "defensive_interval_ratio_days",
+                "cash_ratio",
+                "ocf_to_cl",
+                "ocf_to_total_debt",
+                "interest_coverage_ocf",
+                "cash_coverage_st_debt",
+                "current_ratio_yoy_latest",
+                "cash_yoy_latest",
+                "ocf_yoy_latest",
+            }
+            key_metrics = {k: v for k, v in key_metrics.items() if k in allowed}
         
         # 8. Generate analysis narrative bullets (optional)
         analysis_narrative: List[str] = []
@@ -1365,6 +1458,14 @@ Keep the analysis concise but insightful.
             for i, data in enumerate(reversed(historical_data)):
                 year_label = "Y" if i == 0 else f"Y-{i}"
                 val = data.get(field_name, 0)
+
+                # Liquidity formatting to match the expected response examples.
+                if self.module_id == "liquidity":
+                    if field_name == "current_ratio" and isinstance(val, (int, float)):
+                        val = round(float(val), 2)
+                    elif isinstance(val, float) and val.is_integer():
+                        val = int(val)
+
                 values[year_label] = val
             
             # Calculate YoY growth
@@ -1461,8 +1562,166 @@ Keep the analysis concise but insightful.
 
         if "leverage_financial_risk" in detailed_special_trends:
             detailed_trends.update(self._calculate_leverage_financial_risk_trends(historical_data))
+
+        if "liquidity_trends" in detailed_special_trends:
+            detailed_trends["liquidity_trends"] = self._calculate_liquidity_trends(historical_data)
         
         return detailed_trends
+
+    def _calculate_liquidity_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        """Compute YoY trends and stress patterns for liquidity (updated)."""
+        financials = sorted([d for d in historical_data if d.get("year") is not None], key=lambda x: x.get("year"))
+        if len(financials) < 2:
+            return {}
+
+        years = [int(f["year"]) for f in financials]
+
+        def safe_yoy(curr: Optional[float], prev: Optional[float]) -> Optional[float]:
+            if prev in (None, 0) or curr is None:
+                return None
+            return ((curr - prev) / prev) * 100
+
+        def extract(field: str) -> List[Optional[float]]:
+            out: List[Optional[float]] = []
+            for f in financials:
+                v = f.get(field)
+                if v is None and field == "cash_and_equivalents":
+                    v = f.get("cash_equivalents")
+                if v is None and field == "receivables":
+                    v = f.get("trade_receivables")
+                if v is None and field == "inventory":
+                    v = f.get("inventories")
+                out.append(v)
+            return out
+
+        def compute_series_yoy(values: List[Optional[float]]) -> List[Optional[float]]:
+            if len(values) < 2:
+                return [None] * len(values)
+            out: List[Optional[float]] = [None]
+            for prev, curr in zip(values, values[1:]):
+                out.append(safe_yoy(curr, prev))
+            return out
+
+        def has_consecutive_decline(values: List[Optional[float]], span: int = 3) -> bool:
+            streak = 0
+            for prev, curr in zip(values, values[1:]):
+                if prev is None or curr is None:
+                    streak = 0
+                    continue
+                if curr < prev:
+                    streak += 1
+                    if streak >= span - 1:
+                        return True
+                else:
+                    streak = 0
+            return False
+
+        def has_consecutive_rise(values: List[Optional[float]], span: int = 3) -> bool:
+            streak = 0
+            for prev, curr in zip(values, values[1:]):
+                if prev is None or curr is None:
+                    streak = 0
+                    continue
+                if curr > prev:
+                    streak += 1
+                    if streak >= span - 1:
+                        return True
+                else:
+                    streak = 0
+            return False
+
+        def ratio_series(num_field: str, den_field: str) -> List[Optional[float]]:
+            ratios: List[Optional[float]] = []
+            for f in financials:
+                n = f.get(num_field)
+                d = f.get(den_field)
+                if n is None or d in (None, 0):
+                    ratios.append(None)
+                else:
+                    ratios.append(n / d)
+            return ratios
+
+        # Base series (prefer module-computed names, but fall back to raw fields)
+        cash = extract("cash_and_equivalents")
+        recv = extract("receivables")
+        inv = extract("inventory")
+        ocf = extract("operating_cash_flow")
+        cl = extract("current_liabilities")
+        ca = extract("current_assets")
+        ms = extract("marketable_securities")
+
+        # If OCF missing, fallback to cash_from_operating_activity
+        if all(v is None for v in ocf):
+            ocf = extract("cash_from_operating_activity")
+
+        current_ratio_values = ratio_series("current_assets", "current_liabilities")
+        current_ratio_yoy = compute_series_yoy(current_ratio_values)
+
+        cash_yoy = compute_series_yoy(cash)
+        recv_yoy = compute_series_yoy(recv)
+        inv_yoy = compute_series_yoy(inv)
+        ocf_yoy = compute_series_yoy(ocf)
+        cl_yoy = compute_series_yoy(cl)
+
+        # Ratio trend series
+        quick_ratio: List[Optional[float]] = []
+        cash_ratio: List[Optional[float]] = []
+        for f in financials:
+            inv_val = f.get("inventory")
+            if inv_val is None:
+                inv_val = f.get("inventories")
+            inv_val = inv_val or 0
+
+            cash_val = f.get("cash_and_equivalents")
+            if cash_val is None:
+                cash_val = f.get("cash_equivalents")
+            cash_val = cash_val or 0
+
+            cl_val = f.get("current_liabilities") or 0
+            ca_val = f.get("current_assets") or 0
+
+            if cl_val in (None, 0):
+                quick_ratio.append(None)
+                cash_ratio.append(None)
+            else:
+                quick_ratio.append((ca_val - inv_val) / cl_val)
+                cash_ratio.append(cash_val / cl_val)
+
+        # Pattern detection
+        cash_falling = has_consecutive_decline(cash, 3)
+        cl_rising = has_consecutive_rise(cl, 3)
+        ocf_declining = has_consecutive_decline(ocf, 3)
+        receivables_rising = has_consecutive_rise(recv, 3)
+        inventory_rising = has_consecutive_rise(inv, 3)
+
+        cash_stress_pattern = cash_falling and cl_rising
+        working_capital_worsening = receivables_rising or inventory_rising
+
+        return {
+            "years": years,
+            "yoy": {
+                "current_ratio_yoy": current_ratio_yoy,
+                "cash_yoy": cash_yoy,
+                "receivables_yoy": recv_yoy,
+                "inventory_yoy": inv_yoy,
+                "ocf_yoy": ocf_yoy,
+                "current_liabilities_yoy": cl_yoy,
+            },
+            "ratios_trend": {
+                "current_ratio_trend": current_ratio_values,
+                "quick_ratio_trend": quick_ratio,
+                "cash_ratio_trend": cash_ratio,
+            },
+            "patterns": {
+                "cash_shrinking_3yr": cash_falling,
+                "cl_rising_3yr": cl_rising,
+                "ocf_declining_3yr": ocf_declining,
+                "receivables_rising_3yr": receivables_rising,
+                "inventory_rising_3yr": inventory_rising,
+                "cash_shrinking_while_cl_rising": cash_stress_pattern,
+                "working_capital_worsening": working_capital_worsening,
+            },
+        }
 
     def _calculate_leverage_financial_risk_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         """Nested leverage trend block matching the provided lfr_trends.py structure."""
@@ -2145,10 +2404,39 @@ Keep the analysis concise but insightful.
             pattern = "limited data"
         
         return f"{metric_name} shows {pattern} pattern (avg: {avg_growth:.1f}%)."
+
+    def _calculate_liquidity_latest_yoy(self, enriched_historical: List[Dict[str, float]]) -> Dict[str, Optional[float]]:
+        """Compute YoY % for the latest year for selected liquidity series.
+
+        Uses unrounded values from the last two periods.
+        """
+        if not enriched_historical or len(enriched_historical) < 2:
+            return {}
+
+        prev = enriched_historical[-2]
+        curr = enriched_historical[-1]
+
+        def yoy(curr_val: Any, prev_val: Any) -> Optional[float]:
+            if prev_val in (None, 0) or curr_val is None:
+                return None
+            try:
+                return ((float(curr_val) - float(prev_val)) / float(prev_val)) * 100.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+
+        return {
+            "current_ratio_yoy_latest": yoy(curr.get("current_ratio"), prev.get("current_ratio")),
+            "cash_yoy_latest": yoy(curr.get("cash_and_equivalents"), prev.get("cash_and_equivalents")),
+            "ocf_yoy_latest": yoy(curr.get("operating_cash_flow"), prev.get("operating_cash_flow")),
+        }
     
     def _calculate_cagr_metrics(self, historical_data: List[Dict[str, float]]) -> Dict[str, float]:
         """Calculate CAGR for key metrics, aggregated by module"""
         if not historical_data or len(historical_data) < 2:
+            return {}
+
+        # Liquidity output contract should not include generic CAGRs.
+        if self.module_id == "liquidity":
             return {}
         
         cagr_metrics = {}

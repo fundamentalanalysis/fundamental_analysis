@@ -89,7 +89,14 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
     data = fy.model_dump()
     
     # Add computed fields
-    data["total_debt"] = (data.get("short_term_debt") or 0) + (data.get("long_term_debt") or 0)
+    # Total debt (broader roll-up used by liquidity + leverage modules)
+    data["total_debt"] = (
+        (data.get("short_term_debt") or 0)
+        + (data.get("long_term_debt") or 0)
+        + (data.get("lease_liabilities") or 0)
+        + (data.get("other_borrowings") or 0)
+        + (data.get("preference_capital") or 0)
+    )
     
     # Map new input field names to expected field names
     # Income statement mappings
@@ -102,17 +109,19 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
     if data.get("ebitda") is None and data.get("operating_profit") is not None and data.get("depreciation") is not None:
         data["ebitda"] = (data.get("operating_profit") or 0) + (data.get("depreciation") or 0)
     
-    # Current assets and liabilities (for liquidity module)
+    # Current assets and liabilities (updated liquidity module definitions)
     if data.get("current_assets") is None:
-        # Estimate: cash + receivables + inventory
-        data["current_assets"] = (data.get("cash_equivalents") or 0) + \
-                                 (data.get("trade_receivables") or 0) + \
-                                 (data.get("inventories") or 0)
-    
+        data["current_assets"] = (
+            (data.get("investments") or 0)
+            + (data.get("inventories") or 0)
+            + (data.get("trade_receivables") or 0)
+        )
+
     if data.get("current_liabilities") is None:
-        # Estimate: trade payables + advance from customers
-        data["current_liabilities"] = (data.get("trade_payables") or 0) + \
-                                       (data.get("advance_from_customers") or 0)
+        data["current_liabilities"] = (
+            (data.get("short_term_debt") or 0)
+            + (data.get("other_liability_items") or 0)
+        )
     
     # Cash and equivalents mapping
     if data.get("cash_and_equivalents") is None and data.get("cash_equivalents") is not None:
@@ -122,9 +131,28 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
     if data.get("inventory") is None and data.get("inventories") is not None:
         data["inventory"] = data["inventories"]
     
-    # Operating cash flow mapping
-    if data.get("operating_cash_flow") is None and data.get("cash_from_operating_activity") is not None:
-        data["operating_cash_flow"] = data["cash_from_operating_activity"]
+    # Operating cash flow mapping (prefer updated calc; fallback to cash_from_operating_activity)
+    if data.get("operating_cash_flow") is None:
+        if (
+            data.get("profit_from_operations") is not None
+            or data.get("working_capital_changes") is not None
+            or data.get("direct_taxes") is not None
+        ):
+            data["operating_cash_flow"] = (
+                (data.get("profit_from_operations") or 0)
+                + (data.get("working_capital_changes") or 0)
+                - (data.get("direct_taxes") or 0)
+            )
+        elif data.get("cash_from_operating_activity") is not None:
+            data["operating_cash_flow"] = data["cash_from_operating_activity"]
+
+    # Marketable securities + receivables (for liquidity module)
+    if data.get("marketable_securities") is None and data.get("investments") is not None:
+        data["marketable_securities"] = data.get("investments")
+    if data.get("receivables") is None and data.get("trade_receivables") is not None:
+        data["receivables"] = data.get("trade_receivables")
+    if data.get("interest_expense") is None and data.get("interest_paid_fin") is not None:
+        data["interest_expense"] = data.get("interest_paid_fin")
     
     # COGS estimation (for working capital)
     # Prefer percent-based COGS when manufacturing/material cost % is present.
@@ -144,9 +172,9 @@ def financial_year_to_dict(fy: FinancialYearInput) -> Dict[str, float]:
     if data.get("inventory_wc") is None:
         data["inventory_wc"] = data.get("inventory", 0)
     
-    # Daily operating expenses (for liquidity module)
+    # Daily operating expenses (updated: expenses excluding depreciation)
     if data.get("daily_operating_expenses") is None and data.get("expenses") is not None:
-        data["daily_operating_expenses"] = (data.get("expenses") or 0) / 365
+        data["daily_operating_expenses"] = ((data.get("expenses") or 0) - (data.get("depreciation") or 0)) / 365
     
     # Market cap and valuations (if needed, set defaults)
     if data.get("market_cap") is None:

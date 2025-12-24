@@ -462,20 +462,117 @@ modules:
   liquidity:
     enabled: true
     name: "Liquidity"
-    description: "Short-term liquidity, cash position, and working capital"
+    description: "Short-term liquidity, cash position, and working capital (updated calcs)"
     agent_prompt: |
       You are a liquidity analyst. Evaluate short-term solvency, cash adequacy, and working capital.
     output_sections: ["Liquidity overview", "Cash position", "Working capital", "Concerns", "Assessment"]
-    input_fields: [cash_and_equivalents, marketable_securities, current_assets, current_liabilities, inventory, total_debt, daily_operating_expenses]
+    input_fields:
+      - year
+      - inventories
+      - inventory
+      - cash_equivalents
+      - cash_and_equivalents
+      - short_term_debt
+      - long_term_debt
+      - lease_liabilities
+      - other_borrowings
+      - preference_capital
+      - other_liability_items
+      - investments
+      - trade_receivables
+      - profit_from_operations
+      - working_capital_changes
+      - direct_taxes
+      - expenses
+      - depreciation
+      - interest_paid_fin
+
+      # computed/normalized fields (filled by computed_fields below)
+      - current_assets
+      - current_liabilities
+      - operating_cash_flow
+      - daily_operating_expenses
+      - total_debt
+      - marketable_securities
+      - receivables
+      - interest_expense
+      - cash_and_equivalents
+      - inventory
+
+    computed_fields:
+      inventory:
+        - "inventory"
+        - "inventories"
+      cash_and_equivalents:
+        - "cash_and_equivalents"
+        - "cash_equivalents"
+      marketable_securities:
+        - "marketable_securities"
+        - "investments"
+      receivables:
+        - "receivables"
+        - "trade_receivables"
+      current_assets:
+        - "current_assets"
+        - "(investments or 0) + (inventories or 0) + (trade_receivables or 0)"
+      current_liabilities:
+        - "current_liabilities"
+        - "(short_term_debt or 0) + (other_liability_items or 0)"
+      operating_cash_flow:
+        - "operating_cash_flow"
+        - "(profit_from_operations or 0) + (working_capital_changes or 0) - (direct_taxes or 0)"
+        - "cash_from_operating_activity"
+      daily_operating_expenses:
+        - "daily_operating_expenses"
+        - "((expenses or 0) - (depreciation or 0)) / 365"
+      total_debt:
+        - "total_debt"
+        - "(short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0) + (other_borrowings or 0) + (preference_capital or 0)"
+      interest_expense:
+        - "interest_expense"
+        - "interest_paid_fin"
+
     benchmarks:
       current_ratio_low: 1.0
       quick_ratio_low: 0.8
       cash_ratio_low: 0.2
     metrics:
-      current_ratio: "current_assets / current_liabilities"
-      quick_ratio: "(current_assets - inventory) / current_liabilities"
-      cash_ratio: "(cash_and_equivalents + marketable_securities) / current_liabilities"
-      cash_coverage_days: "cash_and_equivalents / daily_operating_expenses"
+      # ---------- Liquidity Ratios ----------
+      current_ratio: "safe_div(current_assets, current_liabilities)"
+      quick_ratio: "safe_div((current_assets - (inventory or 0)), current_liabilities)"
+      cash_ratio: "safe_div((cash_and_equivalents or 0), current_liabilities)"
+
+      # ---------- Defensive Interval Ratio ----------
+      defensive_interval_ratio_days: "safe_div(((cash_and_equivalents or 0) + (marketable_securities or 0) + (receivables or 0)), daily_operating_expenses)"
+
+      # ---------- Cash Flow Coverage Ratios ----------
+      ocf_to_current_liabilities: "safe_div((operating_cash_flow or 0), current_liabilities)"
+      ocf_to_total_debt: "safe_div((operating_cash_flow or 0), total_debt)"
+      interest_coverage_ocf: "safe_div((operating_cash_flow or 0), (interest_expense or 0))"
+      cash_coverage_st_debt: "safe_div((cash_and_equivalents or 0), (short_term_debt or 0))"
+
+      # ---------- Core Balances ----------
+      cash_and_equivalents: "cash_and_equivalents"
+      marketable_securities: "marketable_securities"
+      receivables: "receivables"
+      inventory: "inventory"
+      current_assets: "current_assets"
+      current_liabilities: "current_liabilities"
+      short_term_debt: "short_term_debt"
+      total_debt: "total_debt"
+      operating_cash_flow: "operating_cash_flow"
+      daily_operating_expenses: "daily_operating_expenses"
+
+    # Detailed per-metric trends (values + YoY + insight)
+    # Keys here must match fields present in prepared/enriched historical data.
+    detailed_trend_fields:
+      cash_and_equivalents: "Cash And Equivalents"
+      receivables: "Receivables"
+      inventory: "Inventory"
+      operating_cash_flow: "Operating Cash Flow"
+      current_liabilities: "Current Liabilities"
+      current_ratio: "Current Ratio"
+
     rules:
       - id: L1
         name: "Current Ratio"
@@ -484,8 +581,8 @@ modules:
         yellow: "< 1.5"
         green: ">= 1.5"
       - id: L2
-        name: "Cash Coverage Days"
-        metric: cash_coverage_days
+        name: "Defensive Interval Ratio (Days)"
+        metric: defensive_interval_ratio_days
         red: "< 30"
         yellow: "< 90"
         green: ">= 90"
