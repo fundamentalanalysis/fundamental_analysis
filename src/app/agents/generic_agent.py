@@ -8,7 +8,7 @@ The module behavior is entirely driven by YAML config.
 No need for separate files per module.
 """
 
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Callable
 from pydantic import BaseModel
 from datetime import datetime
 import math
@@ -114,17 +114,16 @@ class GenericAgent:
     """
     
     def __init__(self, module_id: str):
-        """
-        Initialize agent for a specific module.
-        
+        """Initialize agent for a specific module.
+
         Args:
             module_id: The module key from agents_config.yaml (e.g., "borrowings", "equity_funding_mix")
         """
         self.module_id = module_id
         self.config = get_module_config(module_id)
         if not self.config:
-            raise ValueError(f"Module '{module_id}' not found in configuration")
-        
+            raise ValueError(f"Module '{module_id}' not found in agents_config.yaml")
+
         self.name = self.config.get("name", module_id)
         self.description = self.config.get("description", "")
         self.benchmarks = self.config.get("benchmarks", {})
@@ -133,338 +132,45 @@ class GenericAgent:
         self.trend_keys = self.config.get("trends", [])
         self.agent_prompt = self.config.get("agent_prompt", "")
         self.output_sections = self.config.get("output_sections", [])
-        
+
         # Load global config
         full_config = load_agents_config()
         self.global_config = full_config.get("global", {})
-    
+
+        # Registry of special trend blocks (YAML-driven; algorithms live in code).
+        self.special_trend_handlers: Dict[str, Callable[[List[Dict[str, float]]], Dict[str, Any]]] = {
+            "receivables_vs_revenue": self._special_trend_receivables_vs_revenue,
+            "aiqm_capitalization": self._special_trend_aiqm_capitalization,
+            "aiqm_cwip_vs_capitalization": self._special_trend_aiqm_cwip_vs_capitalization,
+            "risk_scenarios": self._special_trend_risk_scenarios,
+            "leverage_financial_risk": self._special_trend_leverage_financial_risk,
+        }
+
     # -----------------------------------------------------------------------
     # METRICS CALCULATION
     # -----------------------------------------------------------------------
-    
+
     def calculate_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """Calculate all metrics for this module from YAML `metrics:` formulas.
+
+        `prev_data` is exposed to formulas as `prev` (a dict) for YoY / average calculations.
         """
-        Calculate all metrics for this module using formulas from config.
-        
-        The formulas in YAML are descriptive - actual computation is done here.
-        """
-        # Always compute YAML-configured metrics first so config remains the
-        # source-of-truth even for modules that also have custom calculators.
-        metrics: Dict[str, float] = self._calc_generic_metrics(data, prev_data=prev_data)
+        return self._calc_generic_metrics(data, prev_data=prev_data)
 
-        # Module-specific metric calculations (custom overrides / complements)
-        custom_metrics: Dict[str, float] = {}
-        if self.module_id == "equity_funding_mix":
-            custom_metrics = self._calc_equity_funding_metrics(data)
-        elif self.module_id == "borrowings":
-            custom_metrics = self._calc_borrowings_metrics(data)
-        elif self.module_id == "liquidity":
-            custom_metrics = self._calc_liquidity_metrics(data)
-        elif self.module_id == "working_capital":
-            custom_metrics = self._calc_working_capital_metrics(data)
-
-        if custom_metrics:
-            metrics.update(custom_metrics)
-
-        return metrics
-    
-    def _safe_div(self, a: float, b: float, default: float = 0.0) -> float:
-        """Safe division avoiding ZeroDivisionError"""
-        if b == 0 or b is None:
-            return default
-        return a / b
-    
-    def _calc_equity_funding_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate equity & funding mix metrics - comprehensive implementation"""
-        share_capital = data.get("share_capital") or 0
-        reserves = data.get("reserves_and_surplus") or 0
-        net_worth = data.get("net_worth") or (share_capital + reserves)
-        pat = data.get("pat") or 0
-        dividends_paid = abs(data.get("dividends_paid", 0) or data.get("dividend_paid", 0))
-        fcf = data.get("free_cash_flow") or 1
-        new_shares = data.get("new_share_issuance") or 0
-        debt = data.get("debt") or data.get("debt_equitymix") or 0
-        
-        # Prior period values for YoY comparison
-        prior_share_capital = data.get("prior_share_capital")
-        prior_reserves = data.get("prior_reserves_and_surplus")
-        prior_net_worth = data.get("prior_net_worth")
-        prior_debt = data.get("prior_debt")
-        
-        # Payout ratio
-        payout_ratio = self._safe_div(dividends_paid, pat) if pat not in (None, 0) else None
-        dividend_to_fcf = self._safe_div(dividends_paid, fcf) if fcf not in (None, 0) else None
-        
-        # Dilution relative to prior share capital
-        dilution_pct = None
-        if prior_share_capital not in (None, 0):
-            dilution_pct = self._safe_div(new_shares, prior_share_capital)
-        
-        # ROE calculation using average equity
-        avg_equity: Optional[float] = None
-        if prior_net_worth not in (None, 0) and net_worth is not None:
-            avg_equity = (net_worth + prior_net_worth) / 2
-        else:
-            avg_equity = net_worth if net_worth not in (None, 0) else None
-
-        roe = self._safe_div(pat, avg_equity, default=None) if avg_equity not in (None, 0) else None
-        
-        # # Growth rates vs previous year
-        # equity_growth = None
-        # if prior_share_capital not in (None, 0):
-        #     equity_growth = self._safe_div(share_capital - prior_share_capital, prior_share_capital)
-        
-        # debt_growth = None
-        # if prior_debt not in (None, 0):
-        #     debt_growth = self._safe_div(debt - prior_debt, prior_debt)
-        
-        # Retained earnings growth
-        retained_yoy = None
-        if prior_reserves not in (None, 0):
-            retained_yoy = self._safe_div(reserves - prior_reserves, prior_reserves)
-        
-        return {
-            "share_capital": share_capital,
-            "retained_earnings": reserves,
-            "retained_yoy_pct": retained_yoy,
-            "net_worth": net_worth,
-            "pat": pat,
-            "dividends_paid": dividends_paid,
-            "free_cash_flow": fcf,
-            "new_share_issuance": new_shares,
-            "debt": debt,
-            "payout_ratio": payout_ratio,
-            "dividend_to_fcf": dividend_to_fcf,
-            "dilution_pct": dilution_pct,
-            "roe": roe,
-            "avg_equity": avg_equity,
-            # "equity_growth_rate": equity_growth,
-            # "debt_growth_rate": debt_growth,
-            "debt_to_equity": self._safe_div(debt, net_worth),
-            "equity_ratio": self._safe_div(net_worth, net_worth + debt),
-        }
-    
-    def _calc_borrowings_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate borrowings metrics - comprehensive version matching original module"""
-        st_debt = data.get("short_term_debt", 0) or 0
-        lt_debt = data.get("long_term_debt", 0) or 0
-        total_debt = data.get("total_debt")
-        if not total_debt:
-            total_debt = st_debt + lt_debt
-            
-        equity = data.get("total_equity", 0) or 0
-        ebitda = data.get("ebitda", 0) or 0
-        ebit = data.get("ebit", 0) or 0
-        finance_cost = data.get("finance_cost", 0) or 0
-        cwip = data.get("cwip", 0) or 0
-        revenue = data.get("revenue", 0) or 0
-        ocf = data.get("operating_cash_flow", 0) or 0
-        
-        # Maturity profile
-        maturity_lt_1y = data.get("total_debt_maturing_lt_1y", 0) or 0
-        maturity_1_3y = data.get("total_debt_maturing_1_3y", 0) or 0
-        maturity_gt_3y = data.get("total_debt_maturing_gt_3y", 0) or 0
-        
-        # Interest rate profile
-        floating_rate_debt = data.get("floating_rate_debt")
-        fixed_rate_debt = data.get("fixed_rate_debt")
-        weighted_avg_rate = data.get("weighted_avg_interest_rate")
-        
-        # Total assets proxy for CWIP ratio
-        total_assets = (equity or 0) + (total_debt or 0)
-        
-        # Calculate maturity percentages (safe handling of None)
-        maturity_lt_1y_pct = self._safe_div(maturity_lt_1y, total_debt)
-        maturity_1_3y_pct = self._safe_div(maturity_1_3y, total_debt)
-        maturity_gt_3y_pct = self._safe_div(maturity_gt_3y, total_debt)
-        
-        # Balanced maturity check (>=30% 1-3y AND >=20% >3y = positive)
-        # Only check if both values are not None
-        maturity_balance = 0
-        if maturity_1_3y_pct is not None and maturity_gt_3y_pct is not None:
-            if maturity_1_3y_pct >= 0.30 and maturity_gt_3y_pct >= 0.20:
-                maturity_balance = 1
-        
-        # Handle floating/fixed rate debt that may be ratios or amounts
-        floating_share = None
-        if floating_rate_debt is not None:
-            if 0 < floating_rate_debt <= 1:
-                floating_share = floating_rate_debt
-            else:
-                floating_share = self._safe_div(floating_rate_debt, total_debt)
-        
-        fixed_share = None
-        if fixed_rate_debt is not None:
-            if 0 < fixed_rate_debt <= 1:
-                fixed_share = fixed_rate_debt
-            else:
-                fixed_share = self._safe_div(fixed_rate_debt, total_debt)
-        elif floating_share is not None:
-            fixed_share = max(0.0, 1 - floating_share)
-
-        # Cost of debt metrics
-        finance_cost_yield = self._safe_div(finance_cost, total_debt)
-        wacd = weighted_avg_rate if weighted_avg_rate is not None else finance_cost_yield
-        
-        return {
-            "total_debt": total_debt,
-            "total_assets": total_assets,
-            "de_ratio": self._safe_div(total_debt, equity),
-            "debt_ebitda": self._safe_div(total_debt, ebitda),
-            "interest_coverage": self._safe_div(ebit, finance_cost),
-            "st_debt_share": self._safe_div(st_debt, total_debt) if total_debt else 0,
-            "cwip_to_assets": self._safe_div(cwip, total_assets),
-            "floating_share": floating_share,
-            "fixed_share": fixed_share,
-            "wacd": wacd,
-            "finance_cost_yield": finance_cost_yield,
-            "ocf_to_debt": self._safe_div(ocf, total_debt),
-            "maturity_lt_1y_pct": maturity_lt_1y_pct,
-            "maturity_1_3y_pct": maturity_1_3y_pct,
-            "maturity_gt_3y_pct": maturity_gt_3y_pct,
-            "maturity_balance": maturity_balance,
-            # Trend comparison metrics - will be set by trends calculation
-            "debt_vs_ebitda_cagr": 0,  # Placeholder - set from trends
-            "lt_debt_vs_revenue": 0,    # Placeholder - set from trends
-            "finance_cost_vs_debt": 0,  # Placeholder - set from trends
-        }
-    
-    def _calc_liquidity_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate liquidity metrics (updated).
-
-        Mirrors the reference logic:
-        - current_assets: investments + inventories + trade_receivables (computed upstream)
-        - current_liabilities: short_term_debt + other_liability_items (computed upstream)
-        - operating_cash_flow: profit_from_operations + working_capital_changes - direct_taxes (computed upstream)
-        - daily_operating_expenses: (expenses - depreciation)/365 (computed upstream)
-        """
-        cash = data.get("cash_and_equivalents") or 0.0
-        marketable_sec = data.get("marketable_securities") or 0.0
-        receivables = data.get("receivables")
-        if receivables is None:
-            receivables = data.get("trade_receivables")
-        receivables = receivables or 0.0
-
-        inventory = data.get("inventory")
-        if inventory is None:
-            inventory = data.get("inventories")
-        inventory = inventory or 0.0
-
-        current_assets = data.get("current_assets") or 0.0
-        current_liabilities = data.get("current_liabilities") or 0.0
-        short_term_debt = data.get("short_term_debt") or 0.0
-        total_debt = data.get("total_debt")
-        if total_debt is None:
-            total_debt = data.get("borrowings")
-        total_debt = total_debt or 0.0
-
-        ocf = data.get("operating_cash_flow")
-        if ocf is None:
-            ocf = data.get("cash_from_operating_activity")
-        ocf = ocf or 0.0
-
-        interest = data.get("interest_expense")
-        if interest is None:
-            interest = data.get("interest_paid_fin")
-        interest = interest or 0.0
-
-        daily_expenses = data.get("daily_operating_expenses")
-        if daily_expenses is None:
-            exp = data.get("expenses")
-            dep = data.get("depreciation")
-            if exp is not None:
-                daily_expenses = ((exp or 0.0) - (dep or 0.0)) / 365
-        daily_expenses = daily_expenses or 0.0
-
-        liquid_assets = cash + marketable_sec + receivables
-
-        return {
-            # Core ratios
-            "current_ratio": self._safe_div(current_assets, current_liabilities, default=None),
-            "quick_ratio": self._safe_div(current_assets - inventory, current_liabilities, default=None),
-            "cash_ratio": self._safe_div(cash, current_liabilities, default=None),
-
-            # Liquidity runway
-            "defensive_interval_ratio_days": self._safe_div(liquid_assets, daily_expenses, default=None),
-
-            # Cashflow coverage
-            "ocf_to_cl": self._safe_div(ocf, current_liabilities, default=None),
-            "ocf_to_total_debt": self._safe_div(ocf, total_debt, default=None),
-            "interest_coverage_ocf": self._safe_div(ocf, interest, default=None),
-            "cash_coverage_st_debt": self._safe_div(cash, short_term_debt, default=None),
-
-            # Key balances (requested names)
-            "cash": cash,
-            "marketable_securities": marketable_sec,
-
-            # Canonical fields retained for trend enrichment
-            "cash_and_equivalents": cash,
-            "receivables": receivables,
-            "inventory": inventory,
-            "current_assets": current_assets,
-            "current_liabilities": current_liabilities,
-            "short_term_debt": short_term_debt,
-            "total_debt": total_debt,
-            "operating_cash_flow": ocf,
-            "daily_operating_expenses": daily_expenses,
-        }
-    
-    def _calc_working_capital_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate working capital metrics (DSO/DIO/DPO/CCC/NWC).
-
-        Aligns with the reference logic:
-        - COGS derived from revenue * (manufacturing_cost + material_cost) / 100 when available
-        - Uses None for invalid divisions (0/None denominators)
-        """
-        receivables = data.get("trade_receivables")
-        payables = data.get("trade_payables")
-        inventory = data.get("inventory")
-        if inventory is None:
-            inventory = data.get("inventories")
-        revenue = data.get("revenue")
-
-        cogs = data.get("cogs")
-        if cogs is None and revenue is not None:
-            mc = data.get("manufacturing_cost")
-            mat = data.get("material_cost")
-            if mc is not None or mat is not None:
-                cogs = (revenue or 0) * ((mc or 0) + (mat or 0)) / 100
-            else:
-                op = data.get("operating_profit")
-                if op is not None:
-                    cogs = (revenue or 0) - (op or 0)
-        if cogs is None:
-            cogs = 0
-
-        dso_ratio = self._safe_div(receivables or 0, revenue, default=None)
-        dio_ratio = self._safe_div(inventory or 0, cogs, default=None)
-        dpo_ratio = self._safe_div(payables or 0, cogs, default=None)
-
-        dso = (dso_ratio * 365) if dso_ratio is not None else None
-        dio = (dio_ratio * 365) if dio_ratio is not None else None
-        dpo = (dpo_ratio * 365) if dpo_ratio is not None else None
-
-        ccc = None
-        if dso is not None and dio is not None and dpo is not None:
-            ccc = dso + dio - dpo
-
-        nwc = (receivables or 0) + (inventory or 0) - (payables or 0)
-        nwc_ratio = self._safe_div(nwc, revenue, default=None)
-
-        return {
-            "trade_receivables": receivables,
-            "inventory": inventory,
-            "trade_payables": payables,
-            "revenue": revenue,
-            "cogs": cogs,
-            "dso": dso,
-            "dio": dio,
-            "dpo": dpo,
-            "ccc": ccc,
-            "cash_conversion_cycle": ccc,
-            "nwc": nwc,
-            "nwc_ratio": nwc_ratio,
-        }
+        # return {
+        #     "trade_receivables": receivables,
+        #     "inventory": inventory,
+        #     "trade_payables": payables,
+        #     "revenue": revenue,
+        #     "cogs": cogs,
+        #     "dso": dso,
+        #     "dio": dio,
+        #     "dpo": dpo,
+        #     "ccc": ccc,
+        #     "cash_conversion_cycle": ccc,
+        #     "nwc": nwc,
+        #     "nwc_ratio": nwc_ratio,
+        # }
     
     def _calc_generic_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """Fallback: compute metrics generically from YAML formulas.
@@ -1351,80 +1057,103 @@ Keep the analysis concise but insightful.
                     insight=insight
                 )
 
-        # Optional nested / special trends (module-config driven)
+        # Optional nested / special trends (YAML-driven; code-dispatched via registry)
         detailed_special_trends = self.config.get("detailed_special_trends", []) or []
-        if "receivables_vs_revenue" in detailed_special_trends:
-            # Build newest-first series
-            recv_new = [d.get("receivables") if d.get("receivables") is not None else d.get("trade_receivables") for d in reversed(historical_data)]
-            rev_new = [d.get("revenue") for d in reversed(historical_data)]
+        for trend_name in detailed_special_trends:
+            handler = self.special_trend_handlers.get(trend_name)
+            if not handler:
+                continue
+            try:
+                detailed_trends.update(handler(historical_data))
+            except Exception:
+                # Special trends should never crash the module output.
+                continue
 
-            # YoY maps
-            recv_yoy = self._compute_yoy_map_pct(recv_new)
-            rev_yoy = self._compute_yoy_map_pct(rev_new)
+        return detailed_trends
 
-            ratio_list: List[Optional[float]] = []
-            for rcv, rev in zip(recv_new, rev_new):
-                if rev in (0, None) or rcv is None:
-                    ratio_list.append(None)
-                else:
-                    ratio_list.append(rcv / rev)
+    def _special_trend_receivables_vs_revenue(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        # Build newest-first series
+        recv_new = [
+            d.get("receivables") if d.get("receivables") is not None else d.get("trade_receivables")
+            for d in reversed(historical_data)
+        ]
+        rev_new = [d.get("revenue") for d in reversed(historical_data)]
 
-            ratio_yoy = self._compute_yoy_map_pct(ratio_list)
-            detailed_trends["receivables_vs_revenue"] = {
+        recv_yoy = self._compute_yoy_map_pct(recv_new)
+        rev_yoy = self._compute_yoy_map_pct(rev_new)
+
+        ratio_list: List[Optional[float]] = []
+        for rcv, rev in zip(recv_new, rev_new):
+            if rev in (0, None) or rcv is None:
+                ratio_list.append(None)
+            else:
+                ratio_list.append(rcv / rev)
+
+        ratio_yoy = self._compute_yoy_map_pct(ratio_list)
+        return {
+            "receivables_vs_revenue": {
                 "receivable_yoy": recv_yoy,
                 "revenue_yoy": rev_yoy,
                 "receivable_to_revenue_pct": self._build_values_dict(ratio_list),
                 "receivable_to_revenue_yoy": ratio_yoy,
                 "insight": self._generate_recv_vs_revenue_insight(recv_yoy, rev_yoy, ratio_list),
             }
+        }
 
-        if "aiqm_capitalization" in detailed_special_trends or "aiqm_cwip_vs_capitalization" in detailed_special_trends:
-            # Oldest-first series
-            gb_old = [d.get("gross_block") for d in historical_data]
-            cwip_old = [d.get("cwip") for d in historical_data]
+    def _aiqm_cap_and_cwip_series_newest_first(
+        self, historical_data: List[Dict[str, float]]
+    ) -> tuple[List[Optional[float]], List[Optional[float]]]:
+        # Oldest-first series
+        gb_old = [d.get("gross_block") for d in historical_data]
+        cwip_old = [d.get("cwip") for d in historical_data]
 
-            capitalization_old: List[Optional[float]] = [None]
-            for i in range(1, len(historical_data)):
-                gb0, gb1 = gb_old[i - 1], gb_old[i]
-                cw0, cw1 = cwip_old[i - 1], cwip_old[i]
-                if gb0 is None or gb1 is None or cw0 is None or cw1 is None:
-                    capitalization_old.append(None)
-                    continue
-                capitalization_old.append((gb1 - gb0) - (cw1 - cw0))
+        capitalization_old: List[Optional[float]] = [None]
+        for i in range(1, len(historical_data)):
+            gb0, gb1 = gb_old[i - 1], gb_old[i]
+            cw0, cw1 = cwip_old[i - 1], cwip_old[i]
+            if gb0 is None or gb1 is None or cw0 is None or cw1 is None:
+                capitalization_old.append(None)
+                continue
+            capitalization_old.append((gb1 - gb0) - (cw1 - cw0))
 
-            # Newest-first for labeling
-            cap_new = list(reversed(capitalization_old))
-            cwip_new = list(reversed(cwip_old))
+        # Newest-first for labeling
+        cap_new = list(reversed(capitalization_old))
+        cwip_new = list(reversed(cwip_old))
+        return cap_new, cwip_new
 
-            if "aiqm_capitalization" in detailed_special_trends:
-                cap_yoy = self._compute_yoy_map_pct(cap_new)
-                cap_values = self._build_values_dict(cap_new)
-                cap_insight = self._generate_trend_insight("Capitalization", cap_values, cap_yoy)
-                detailed_trends["capitalization"] = {
-                    "values": cap_values,
-                    "yoy_growth_pct": cap_yoy,
-                    "insight": cap_insight,
-                }
+    def _special_trend_aiqm_capitalization(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        cap_new, _cwip_new = self._aiqm_cap_and_cwip_series_newest_first(historical_data)
+        cap_yoy = self._compute_yoy_map_pct(cap_new)
+        cap_values = self._build_values_dict(cap_new)
+        cap_insight = self._generate_trend_insight("Capitalization", cap_values, cap_yoy)
+        return {
+            "capitalization": {
+                "values": cap_values,
+                "yoy_growth_pct": cap_yoy,
+                "insight": cap_insight,
+            }
+        }
 
-            if "aiqm_cwip_vs_capitalization" in detailed_special_trends:
-                ratio_new: List[Optional[float]] = []
-                for cw, cap in zip(cwip_new, cap_new):
-                    if cw is None or cap in (None, 0):
-                        ratio_new.append(None)
-                    else:
-                        ratio_new.append(cw / cap)
-                detailed_trends["cwip_vs_capitalization"] = {
-                    "values": self._build_values_dict(ratio_new),
-                    "insight": "CWIP vs Capitalization ratio evaluated.",
-                }
+    def _special_trend_aiqm_cwip_vs_capitalization(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        cap_new, cwip_new = self._aiqm_cap_and_cwip_series_newest_first(historical_data)
+        ratio_new: List[Optional[float]] = []
+        for cw, cap in zip(cwip_new, cap_new):
+            if cw is None or cap in (None, 0):
+                ratio_new.append(None)
+            else:
+                ratio_new.append(cw / cap)
+        return {
+            "cwip_vs_capitalization": {
+                "values": self._build_values_dict(ratio_new),
+                "insight": "CWIP vs Capitalization ratio evaluated.",
+            }
+        }
 
-        if "risk_scenarios" in detailed_special_trends:
-            detailed_trends.update(self._calculate_risk_scenarios(historical_data))
+    def _special_trend_risk_scenarios(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        return self._calculate_risk_scenarios(historical_data)
 
-        if "leverage_financial_risk" in detailed_special_trends:
-            detailed_trends.update(self._calculate_leverage_financial_risk_trends(historical_data))
-
-        return detailed_trends
+    def _special_trend_leverage_financial_risk(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        return self._calculate_leverage_financial_risk_trends(historical_data)
 
     def _calculate_leverage_financial_risk_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         """Nested leverage trend block matching the provided lfr_trends.py structure."""

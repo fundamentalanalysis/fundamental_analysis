@@ -44,17 +44,25 @@ modules:
       wacd_moderate: 0.07
       refinancing_high: 0.50
     metrics:
-      total_debt: "short_term_debt + long_term_debt"
-      de_ratio: "total_debt / total_equity"
-      debt_ebitda: "total_debt / ebitda"
-      interest_coverage: "ebit / finance_cost"
-      st_debt_share: "short_term_debt / total_debt"
-      floating_share: "floating_rate_debt"
+      # Note: generic metrics evaluation does not chain metric-to-metric dependencies.
+      # Keep formulas based on input/computed_fields rather than referencing other metrics.
+      total_debt: "(short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)"
+      total_assets: "(total_equity or 0) + ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))"
+      de_ratio: "safe_div(((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)), (total_equity or 0))"
+      debt_ebitda: "safe_div(((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)), (ebitda or 0))"
+      interest_coverage: "safe_div((ebit or 0), (finance_cost or 0))"
+      st_debt_share: "safe_div((short_term_debt or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      # Normalize floating/fixed values: accept either ratios (0-1) or absolute amounts.
+      floating_share: "(floating_rate_debt if (0 < floating_rate_debt <= 1) else (safe_div((floating_rate_debt or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))) if floating_rate_debt > 1 else None))"
+      fixed_share: "(fixed_rate_debt if (0 < fixed_rate_debt <= 1) else (safe_div((fixed_rate_debt or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))) if fixed_rate_debt > 1 else (max(0, 1 - floating_rate_debt) if (0 < floating_rate_debt <= 1) else None)))"
       wacd: "weighted_avg_interest_rate"
-      maturity_lt_1y_pct: "total_debt_maturing_lt_1y / total_debt"
-      maturity_1_3y_pct: "total_debt_maturing_1_3y / total_debt"
-      maturity_gt_3y_pct: "total_debt_maturing_gt_3y / total_debt"
-      cwip_to_assets: "cwip / (total_equity + total_debt)"
+      finance_cost_yield: "safe_div((finance_cost or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      ocf_to_debt: "safe_div((operating_cash_flow or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      maturity_lt_1y_pct: "safe_div((total_debt_maturing_lt_1y or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      maturity_1_3y_pct: "safe_div((total_debt_maturing_1_3y or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      maturity_gt_3y_pct: "safe_div((total_debt_maturing_gt_3y or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0)))"
+      maturity_balance: "1 if ((safe_div((total_debt_maturing_1_3y or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))) or 0) >= 0.30 and (safe_div((total_debt_maturing_gt_3y or 0), ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))) or 0) >= 0.20) else 0"
+      cwip_to_assets: "safe_div((cwip or 0), ((total_equity or 0) + ((short_term_debt or 0) + (long_term_debt or 0) + (lease_liabilities or 0))))"
     trends: [debt_cagr, ebitda_cagr, lt_debt_cagr, revenue_cagr, finance_cost_cagr, st_debt_yoy_growth]
     trend_metrics:
       # Which fields to calculate CAGR for
@@ -320,12 +328,25 @@ modules:
       dilution_high: 0.10
     metrics:
       retained_earnings: "reserves_and_surplus"
-      dividend_payout_ratio: "abs(dividend_paid) / pat"
-      dividend_to_fcf: "abs(dividend_paid) / free_cash_flow"
-      roe: "pat / avg_equity"
-      equity_dilution_pct: "new_share_issuance / prior_share_capital"
-      debt_to_equity: "debt_equitymix / net_worth"
-      equity_ratio: "net_worth / (net_worth + debt_equitymix)"
+      # Alias used by trend engine + summaries
+      payout_ratio: "safe_div(abs(dividend_paid), (pat or 0))"
+      dividend_payout_ratio: "safe_div(abs(dividend_paid), (pat or 0))"
+      dividend_to_fcf: "safe_div(abs(dividend_paid), (free_cash_flow or 0))"
+
+      # Average equity uses previous year's net_worth when available
+      avg_equity: "(((net_worth or 0) + (prev.get('net_worth') or (net_worth or 0))) / 2)"
+      roe: "safe_div((pat or 0), (((net_worth or 0) + (prev.get('net_worth') or (net_worth or 0))) / 2))"
+
+      # Dilution uses previous year's share_capital (computed_fields produces share_capital per year)
+      dilution_pct: "safe_div((new_share_issuance or 0), abs(prev.get('share_capital') or 0))"
+      equity_dilution_pct: "safe_div((new_share_issuance or 0), abs(prev.get('share_capital') or 0))"
+
+      # Retained earnings YoY growth (decimal)
+      re_growth_yoy: "safe_div(((reserves_and_surplus or 0) - (prev.get('reserves_and_surplus') or 0)), abs(prev.get('reserves_and_surplus') or 0))"
+      retained_yoy_pct: "safe_div(((reserves_and_surplus or 0) - (prev.get('reserves_and_surplus') or 0)), abs(prev.get('reserves_and_surplus') or 0))"
+
+      debt_to_equity: "safe_div((debt_equitymix or 0), (net_worth or 0))"
+      equity_ratio: "safe_div((net_worth or 0), ((net_worth or 0) + (debt_equitymix or 0)))"
     trends: [retained_earnings_cagr, networth_cagr, pat_cagr, equity_cagr, debt_cagr]
     trend_metrics:
       # Which fields to calculate CAGR for
@@ -547,6 +568,7 @@ modules:
 
       # ---------- Cash Flow Coverage Ratios ----------
       ocf_to_current_liabilities: "safe_div((operating_cash_flow or 0), current_liabilities)"
+      ocf_to_cl: "safe_div((operating_cash_flow or 0), current_liabilities)"
       ocf_to_total_debt: "safe_div((operating_cash_flow or 0), total_debt)"
       interest_coverage_ocf: "safe_div((operating_cash_flow or 0), (interest_expense or 0))"
       cash_coverage_st_debt: "safe_div((cash_and_equivalents or 0), (short_term_debt or 0))"
@@ -804,6 +826,7 @@ modules:
       dio: "safe_div(inventory, cogs) * 365"
       dpo: "safe_div(trade_payables, cogs) * 365"
       ccc: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
+      cash_conversion_cycle: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
       nwc: "(trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)"
       nwc_ratio: "safe_div(((trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)), revenue)"
 
