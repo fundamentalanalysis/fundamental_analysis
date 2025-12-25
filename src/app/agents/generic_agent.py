@@ -148,37 +148,24 @@ class GenericAgent:
         
         The formulas in YAML are descriptive - actual computation is done here.
         """
-        metrics = {}
-        
-        # Module-specific metric calculations
+        # Always compute YAML-configured metrics first so config remains the
+        # source-of-truth even for modules that also have custom calculators.
+        metrics: Dict[str, float] = self._calc_generic_metrics(data, prev_data=prev_data)
+
+        # Module-specific metric calculations (custom overrides / complements)
+        custom_metrics: Dict[str, float] = {}
         if self.module_id == "equity_funding_mix":
-            metrics = self._calc_equity_funding_metrics(data)
+            custom_metrics = self._calc_equity_funding_metrics(data)
         elif self.module_id == "borrowings":
-            metrics = self._calc_borrowings_metrics(data)
+            custom_metrics = self._calc_borrowings_metrics(data)
         elif self.module_id == "liquidity":
-            metrics = self._calc_liquidity_metrics(data)
+            custom_metrics = self._calc_liquidity_metrics(data)
         elif self.module_id == "working_capital":
-            metrics = self._calc_working_capital_metrics(data)
-        elif self.module_id == "capex_asset_quality":
-            metrics = self._calc_capex_metrics(data)
-        elif self.module_id == "profitability":
-            metrics = self._calc_profitability_metrics(data)
-        elif self.module_id == "cash_flow":
-            metrics = self._calc_cash_flow_metrics(data)
-        elif self.module_id == "solvency":
-            metrics = self._calc_solvency_metrics(data)
-        elif self.module_id == "valuation":
-            metrics = self._calc_valuation_metrics(data)
-        elif self.module_id == "growth":
-            metrics = self._calc_growth_metrics(data)
-        elif self.module_id == "risk_assessment":
-            metrics = self._calc_risk_metrics(data)
-        elif self.module_id == "credit_rating":
-            metrics = self._calc_credit_rating_metrics(data)
-        else:
-            # Fallback: compute metrics generically from YAML formulas
-            metrics = self._calc_generic_metrics(data, prev_data=prev_data)
-        
+            custom_metrics = self._calc_working_capital_metrics(data)
+
+        if custom_metrics:
+            metrics.update(custom_metrics)
+
         return metrics
     
     def _safe_div(self, a: float, b: float, default: float = 0.0) -> float:
@@ -214,14 +201,13 @@ class GenericAgent:
             dilution_pct = self._safe_div(new_shares, prior_share_capital)
         
         # ROE calculation using average equity
-        avg_equity = None
-        if prior_net_worth is not None:
-            avg_equity = self._safe_div(pat, avg_equity)((net_worth + prior_net_worth) / 2) if prior_net_worth not in (None, 0) else net_worth
+        avg_equity: Optional[float] = None
+        if prior_net_worth not in (None, 0) and net_worth is not None:
+            avg_equity = (net_worth + prior_net_worth) / 2
         else:
             avg_equity = net_worth if net_worth not in (None, 0) else None
-        print(f"DEBUG: net_worth={net_worth}, prior_net_worth={prior_net_worth}, avg_equity={avg_equity}")
-        print(f"DEBUG: Calculating ROE with pat={pat}, avg_equity={avg_equity}")
-        roe = self._safe_div(pat, avg_equity) if avg_equity not in (None, 0) else None
+
+        roe = self._safe_div(pat, avg_equity, default=None) if avg_equity not in (None, 0) else None
         
         # # Growth rates vs previous year
         # equity_growth = None
@@ -478,131 +464,6 @@ class GenericAgent:
             "cash_conversion_cycle": ccc,
             "nwc": nwc,
             "nwc_ratio": nwc_ratio,
-        }
-    
-    def _calc_capex_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate capex & asset quality metrics"""
-        nfa = data.get("net_fixed_assets", 1)
-        gross_block = data.get("gross_block", 1)
-        accum_dep = data.get("accumulated_depreciation", 0)
-        cwip = data.get("cwip_asset", 0)
-        capex = data.get("capex", 0)
-        revenue = data.get("revenue", 1)
-        ocf = data.get("operating_cash_flow", 1)
-        
-        return {
-            "asset_turnover": self._safe_div(revenue, nfa),
-            "capex_to_revenue": self._safe_div(capex, revenue),
-            "capex_to_ocf": self._safe_div(capex, ocf),
-            "asset_age_ratio": self._safe_div(accum_dep, gross_block),
-            "cwip_ratio": self._safe_div(cwip, gross_block),
-        }
-    
-    def _calc_profitability_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate profitability metrics"""
-        revenue = data.get("revenue", 1)
-        ebitda = data.get("ebitda", 0)
-        ebit = data.get("ebit", 0)
-        pat = data.get("pat", 0)
-        ocf = data.get("operating_cash_flow", 0)
-        
-        return {
-            "ebitda_margin": self._safe_div(ebitda, revenue),
-            "ebit_margin": self._safe_div(ebit, revenue),
-            "pat_margin": self._safe_div(pat, revenue),
-            "ocf_to_pat": self._safe_div(ocf, pat) if pat > 0 else 0,
-        }
-    
-    def _calc_cash_flow_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate cash flow metrics"""
-        ocf = data.get("operating_cash_flow", 0)
-        capex = data.get("capex", 0)
-        pat = data.get("pat", 1)
-        debt = data.get("total_debt", 1)
-        revenue = data.get("revenue", 1)
-        
-        fcf = ocf - capex
-        
-        return {
-            "fcf": fcf,
-            "fcf_margin": self._safe_div(fcf, revenue),
-            "ocf_to_debt": self._safe_div(ocf, debt),
-            "fcf_to_pat": self._safe_div(fcf, pat) if pat > 0 else 0,
-        }
-    
-    def _calc_solvency_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate solvency metrics"""
-        total_assets = data.get("total_assets", 1)
-        total_liabilities = data.get("total_liabilities", 0)
-        total_equity = data.get("total_equity", 0)
-        lt_debt = data.get("long_term_debt", 0)
-        
-        return {
-            "equity_to_assets": self._safe_div(total_equity, total_assets),
-            "debt_to_assets": self._safe_div(total_liabilities, total_assets),
-            "lt_debt_to_equity": self._safe_div(lt_debt, total_equity),
-        }
-    
-    def _calc_valuation_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate valuation metrics"""
-        mcap = data.get("market_cap", 0)
-        pat = data.get("pat", 1)
-        book_value = data.get("book_value", 1)
-        ebitda = data.get("ebitda", 1)
-        fcf = data.get("free_cash_flow", 0)
-        debt = data.get("total_debt", 0)
-        cash = data.get("cash_and_equivalents", 0)
-        
-        ev = mcap + debt - cash
-        
-        return {
-            "pe_ratio": self._safe_div(mcap, pat) if pat > 0 else 0,
-            "pb_ratio": self._safe_div(mcap, book_value),
-            "ev_ebitda": self._safe_div(ev, ebitda),
-            "fcf_yield": self._safe_div(fcf, mcap) if mcap > 0 else 0,
-        }
-    
-    def _calc_growth_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate growth metrics"""
-        rev_t = data.get("revenue", 0)
-        rev_t1 = data.get("revenue_prior", rev_t * 0.9)
-        pat_t = data.get("pat", 0)
-        pat_t1 = data.get("pat_prior", pat_t * 0.9)
-        ebitda_t = data.get("ebitda", 0)
-        ebitda_t1 = data.get("ebitda_prior", ebitda_t * 0.9)
-        
-        return {
-            "revenue_growth": self._safe_div(rev_t - rev_t1, abs(rev_t1)) if rev_t1 else 0,
-            "pat_growth": self._safe_div(pat_t - pat_t1, abs(pat_t1)) if pat_t1 else 0,
-            "ebitda_growth": self._safe_div(ebitda_t - ebitda_t1, abs(ebitda_t1)) if ebitda_t1 else 0,
-        }
-    
-    def _calc_risk_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate risk assessment metrics"""
-        assets = data.get("risk_assets_total", data.get("total_assets", 1))
-        equity = data.get("total_equity", 1)
-        ebit = data.get("risk_ebit", data.get("ebit", 0))
-        interest = data.get("risk_interest", data.get("finance_cost", 1))
-        capex = data.get("risk_capex", data.get("capex", 0))
-        revenue = data.get("risk_revenue", data.get("revenue", 1))
-        
-        return {
-            "financial_leverage": self._safe_div(assets, equity),
-            "interest_burden": self._safe_div(interest, ebit) if ebit > 0 else 0,
-            "capex_intensity": self._safe_div(capex, revenue),
-        }
-    
-    def _calc_credit_rating_metrics(self, data: Dict[str, float]) -> Dict[str, float]:
-        """Calculate credit rating metrics"""
-        debt = data.get("total_debt", 0)
-        ebitda = data.get("ebitda", 1)
-        interest = data.get("interest_expense", data.get("finance_cost", 1))
-        ocf = data.get("operating_cash_flow", 0)
-        
-        return {
-            "debt_ebitda": self._safe_div(debt, ebitda),
-            "ebitda_interest": self._safe_div(ebitda, interest),
-            "ffo_debt": self._safe_div(ocf + interest, debt) if debt > 0 else 0,
         }
     
     def _calc_generic_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
@@ -1563,165 +1424,7 @@ Keep the analysis concise but insightful.
         if "leverage_financial_risk" in detailed_special_trends:
             detailed_trends.update(self._calculate_leverage_financial_risk_trends(historical_data))
 
-        if "liquidity_trends" in detailed_special_trends:
-            detailed_trends["liquidity_trends"] = self._calculate_liquidity_trends(historical_data)
-        
         return detailed_trends
-
-    def _calculate_liquidity_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
-        """Compute YoY trends and stress patterns for liquidity (updated)."""
-        financials = sorted([d for d in historical_data if d.get("year") is not None], key=lambda x: x.get("year"))
-        if len(financials) < 2:
-            return {}
-
-        years = [int(f["year"]) for f in financials]
-
-        def safe_yoy(curr: Optional[float], prev: Optional[float]) -> Optional[float]:
-            if prev in (None, 0) or curr is None:
-                return None
-            return ((curr - prev) / prev) * 100
-
-        def extract(field: str) -> List[Optional[float]]:
-            out: List[Optional[float]] = []
-            for f in financials:
-                v = f.get(field)
-                if v is None and field == "cash_and_equivalents":
-                    v = f.get("cash_equivalents")
-                if v is None and field == "receivables":
-                    v = f.get("trade_receivables")
-                if v is None and field == "inventory":
-                    v = f.get("inventories")
-                out.append(v)
-            return out
-
-        def compute_series_yoy(values: List[Optional[float]]) -> List[Optional[float]]:
-            if len(values) < 2:
-                return [None] * len(values)
-            out: List[Optional[float]] = [None]
-            for prev, curr in zip(values, values[1:]):
-                out.append(safe_yoy(curr, prev))
-            return out
-
-        def has_consecutive_decline(values: List[Optional[float]], span: int = 3) -> bool:
-            streak = 0
-            for prev, curr in zip(values, values[1:]):
-                if prev is None or curr is None:
-                    streak = 0
-                    continue
-                if curr < prev:
-                    streak += 1
-                    if streak >= span - 1:
-                        return True
-                else:
-                    streak = 0
-            return False
-
-        def has_consecutive_rise(values: List[Optional[float]], span: int = 3) -> bool:
-            streak = 0
-            for prev, curr in zip(values, values[1:]):
-                if prev is None or curr is None:
-                    streak = 0
-                    continue
-                if curr > prev:
-                    streak += 1
-                    if streak >= span - 1:
-                        return True
-                else:
-                    streak = 0
-            return False
-
-        def ratio_series(num_field: str, den_field: str) -> List[Optional[float]]:
-            ratios: List[Optional[float]] = []
-            for f in financials:
-                n = f.get(num_field)
-                d = f.get(den_field)
-                if n is None or d in (None, 0):
-                    ratios.append(None)
-                else:
-                    ratios.append(n / d)
-            return ratios
-
-        # Base series (prefer module-computed names, but fall back to raw fields)
-        cash = extract("cash_and_equivalents")
-        recv = extract("receivables")
-        inv = extract("inventory")
-        ocf = extract("operating_cash_flow")
-        cl = extract("current_liabilities")
-        ca = extract("current_assets")
-        ms = extract("marketable_securities")
-
-        # If OCF missing, fallback to cash_from_operating_activity
-        if all(v is None for v in ocf):
-            ocf = extract("cash_from_operating_activity")
-
-        current_ratio_values = ratio_series("current_assets", "current_liabilities")
-        current_ratio_yoy = compute_series_yoy(current_ratio_values)
-
-        cash_yoy = compute_series_yoy(cash)
-        recv_yoy = compute_series_yoy(recv)
-        inv_yoy = compute_series_yoy(inv)
-        ocf_yoy = compute_series_yoy(ocf)
-        cl_yoy = compute_series_yoy(cl)
-
-        # Ratio trend series
-        quick_ratio: List[Optional[float]] = []
-        cash_ratio: List[Optional[float]] = []
-        for f in financials:
-            inv_val = f.get("inventory")
-            if inv_val is None:
-                inv_val = f.get("inventories")
-            inv_val = inv_val or 0
-
-            cash_val = f.get("cash_and_equivalents")
-            if cash_val is None:
-                cash_val = f.get("cash_equivalents")
-            cash_val = cash_val or 0
-
-            cl_val = f.get("current_liabilities") or 0
-            ca_val = f.get("current_assets") or 0
-
-            if cl_val in (None, 0):
-                quick_ratio.append(None)
-                cash_ratio.append(None)
-            else:
-                quick_ratio.append((ca_val - inv_val) / cl_val)
-                cash_ratio.append(cash_val / cl_val)
-
-        # Pattern detection
-        cash_falling = has_consecutive_decline(cash, 3)
-        cl_rising = has_consecutive_rise(cl, 3)
-        ocf_declining = has_consecutive_decline(ocf, 3)
-        receivables_rising = has_consecutive_rise(recv, 3)
-        inventory_rising = has_consecutive_rise(inv, 3)
-
-        cash_stress_pattern = cash_falling and cl_rising
-        working_capital_worsening = receivables_rising or inventory_rising
-
-        return {
-            "years": years,
-            "yoy": {
-                "current_ratio_yoy": current_ratio_yoy,
-                "cash_yoy": cash_yoy,
-                "receivables_yoy": recv_yoy,
-                "inventory_yoy": inv_yoy,
-                "ocf_yoy": ocf_yoy,
-                "current_liabilities_yoy": cl_yoy,
-            },
-            "ratios_trend": {
-                "current_ratio_trend": current_ratio_values,
-                "quick_ratio_trend": quick_ratio,
-                "cash_ratio_trend": cash_ratio,
-            },
-            "patterns": {
-                "cash_shrinking_3yr": cash_falling,
-                "cl_rising_3yr": cl_rising,
-                "ocf_declining_3yr": ocf_declining,
-                "receivables_rising_3yr": receivables_rising,
-                "inventory_rising_3yr": inventory_rising,
-                "cash_shrinking_while_cl_rising": cash_stress_pattern,
-                "working_capital_worsening": working_capital_worsening,
-            },
-        }
 
     def _calculate_leverage_financial_risk_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         """Nested leverage trend block matching the provided lfr_trends.py structure."""

@@ -638,6 +638,7 @@ async def analyze_stream(req: AnalyzeRequest):
     Returns Server-Sent Events (SSE) with progress after each module.
     """
     from fastapi.responses import StreamingResponse
+    from fastapi.encoders import jsonable_encoder
     import json
     
     company = req.company.upper()
@@ -663,12 +664,18 @@ async def analyze_stream(req: AnalyzeRequest):
                 year=year
             ):
                 # Send state update as SSE
-                yield f"data: {json.dumps(state_update)}\n\n"
+                try:
+                    payload = jsonable_encoder(state_update)
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                except Exception:
+                    # As a last resort, stringify unknown objects to keep the stream alive.
+                    payload = jsonable_encoder(state_update, custom_encoder={object: str})
+                    yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
             
-            yield f"data: {json.dumps({'status': 'completed'})}\n\n"
+            yield f"data: {json.dumps({'status': 'completed'}, ensure_ascii=False)}\n\n"
             
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         generate(),
