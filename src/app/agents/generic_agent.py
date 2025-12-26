@@ -12,8 +12,13 @@ from typing import Dict, Any, List, Optional, Union, Callable
 from pydantic import BaseModel
 from datetime import datetime
 import math
+import logging
+import os
 
 from src.app.config import load_agents_config, get_module_config, OPENAI_MODEL, get_llm_client
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +134,6 @@ class GenericAgent:
         self.benchmarks = self.config.get("benchmarks", {})
         self.metric_formulas = self.config.get("metrics", {})
         self.rules = self.config.get("rules", [])
-        self.trend_keys = self.config.get("trends", [])
         self.agent_prompt = self.config.get("agent_prompt", "")
         self.output_sections = self.config.get("output_sections", [])
 
@@ -155,22 +159,28 @@ class GenericAgent:
 
         `prev_data` is exposed to formulas as `prev` (a dict) for YoY / average calculations.
         """
-        return self._calc_generic_metrics(data, prev_data=prev_data)
+        if self._metrics_logging_enabled():
+            keys_preview = list(self.metric_formulas.keys())
+            logger.info(
+                "metrics_eval_start module=%s metric_count=%d metrics=%s",
+                self.module_id,
+                len(keys_preview),
+                keys_preview,
+            )
 
-        # return {
-        #     "trade_receivables": receivables,
-        #     "inventory": inventory,
-        #     "trade_payables": payables,
-        #     "revenue": revenue,
-        #     "cogs": cogs,
-        #     "dso": dso,
-        #     "dio": dio,
-        #     "dpo": dpo,
-        #     "ccc": ccc,
-        #     "cash_conversion_cycle": ccc,
-        #     "nwc": nwc,
-        #     "nwc_ratio": nwc_ratio,
-        # }
+        metrics = self._calc_generic_metrics(data, prev_data=prev_data)
+
+        if self._metrics_logging_enabled():
+            computed = [k for k, v in metrics.items() if v is not None]
+            missing = [k for k, v in metrics.items() if v is None]
+            logger.info(
+                "metrics_eval_done module=%s computed=%d missing=%d",
+                self.module_id,
+                len(computed),
+                len(missing),
+            )
+
+        return metrics
     
     def _calc_generic_metrics(self, data: Dict[str, float], prev_data: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """Fallback: compute metrics generically from YAML formulas.
@@ -179,6 +189,8 @@ class GenericAgent:
         Expressions are evaluated with a restricted namespace.
         """
         if not self.metric_formulas:
+            if self._metrics_logging_enabled():
+                logger.info("metrics_eval_skip module=%s reason=no_metric_formulas", self.module_id)
             return {}
 
         from collections import defaultdict
@@ -219,6 +231,12 @@ class GenericAgent:
             return 0.0
 
         ctx = defaultdict(lambda: 0)
+        ctx.update({
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "round": round,
+        })
         ctx.update({k: (0 if v is None else v) for k, v in data.items()})
         # Optional previous year context for metrics that require deltas (e.g., debt_funded_capex)
         ctx["prev"] = prev_data or {}
@@ -241,13 +259,52 @@ class GenericAgent:
         }
 
         metrics: Dict[str, Any] = {}
+        log_enabled = self._metrics_logging_enabled()
         for metric_name, expr in self.metric_formulas.items():
+            if log_enabled and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "metrics_eval_metric_start module=%s metric=%s expr=%s",
+                    self.module_id,
+                    metric_name,
+                    expr,
+                )
             try:
-                metrics[metric_name] = eval(expr, safe_globals, ctx)
-            except (ZeroDivisionError, TypeError, ValueError, SyntaxError):
+                value = eval(expr, safe_globals, ctx)
+                metrics[metric_name] = value
+                if log_enabled and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "metrics_eval_metric_done module=%s metric=%s value=%s",
+                        self.module_id,
+                        metric_name,
+                        value,
+                    )
+            except (ZeroDivisionError, TypeError, ValueError, SyntaxError) as e:
                 metrics[metric_name] = None
+                if log_enabled:
+                    logger.warning(
+                        "metrics_eval_metric_failed module=%s metric=%s error=%s",
+                        self.module_id,
+                        metric_name,
+                        e,
+                    )
 
         return metrics
+
+    def _metrics_logging_enabled(self) -> bool:
+        """Opt-in logging for YAML metrics evaluation.
+
+        Enabled when either:
+        - env var `FA_METRICS_LOG` is truthy (1/true/yes/on)
+        - global config contains `enable_metrics_logging: true`
+        """
+        try:
+            if self.global_config.get("enable_metrics_logging") is True:
+                return True
+        except Exception:
+            pass
+
+        v = os.getenv("FA_METRICS_LOG", "").strip().lower()
+        return v in {"1", "true", "yes", "y", "on"}
 
     def _enrich_historical_with_metrics_if_needed(
         self,
@@ -997,36 +1054,27 @@ Keep the analysis concise but insightful.
             score_interpretation=interpretation,
             llm_narrative=narrative
         )
-    
+
     def _calculate_detailed_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, TrendDetail]:
-        """
-        Calculate detailed trends with YoY breakdown for each metric.
-        
-        Args:
-            historical_data: List of dicts, oldest first (Y-4, Y-3, Y-2, Y-1, Y)
-            
-        Returns:
-            Dict of metric name -> TrendDetail with values, yoy_growth, and insight
-        """
+        """Calculate detailed trends with YoY breakdown for each metric."""
         if not historical_data or len(historical_data) < 2:
             return {}
-        
-        detailed_trends = {}
-        n = len(historical_data)
-        
+
+        detailed_trends: Dict[str, Any] = {}
+
         # Fields to track for trends based on module
         trend_fields = self._get_trend_fields()
-        
+
         for field_name, display_name in trend_fields.items():
-            values = {}
-            yoy_growth = {}
-            
+            values: Dict[str, Any] = {}
+            yoy_growth: Dict[str, Any] = {}
+
             # Extract values for each year (reverse so Y is current)
             for i, data in enumerate(reversed(historical_data)):
                 year_label = "Y" if i == 0 else f"Y-{i}"
                 val = data.get(field_name, 0)
 
-                # Liquidity formatting to match the expected response examples.
+                # Liquidity formatting to match expected response examples.
                 if self.module_id == "liquidity":
                     if field_name == "current_ratio" and isinstance(val, (int, float)):
                         val = round(float(val), 2)
@@ -1034,7 +1082,7 @@ Keep the analysis concise but insightful.
                         val = int(val)
 
                 values[year_label] = val
-            
+
             # Calculate YoY growth
             year_labels = list(values.keys())
             for i in range(len(year_labels) - 1):
@@ -1042,19 +1090,19 @@ Keep the analysis concise but insightful.
                 prev_label = year_labels[i + 1]
                 current_val = values[current_label]
                 prev_val = values[prev_label]
-                
+
                 if prev_val and prev_val != 0:
                     growth = ((current_val - prev_val) / abs(prev_val)) * 100
                     yoy_growth[f"{current_label}_vs_{prev_label}"] = round(growth, 2)
-            
+
             # Generate insight
             insight = self._generate_trend_insight(display_name, values, yoy_growth)
-            
+
             if values and any(v not in (None, 0) for v in values.values()):
                 detailed_trends[field_name] = TrendDetail(
                     values=values,
                     yoy_growth_pct=yoy_growth,
-                    insight=insight
+                    insight=insight,
                 )
 
         # Optional nested / special trends (YAML-driven; code-dispatched via registry)
