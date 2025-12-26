@@ -711,8 +711,213 @@ def get_workflow_graph():
 
 
 # ---------------------------------------------------------
+# MESH ANALYSIS ENDPOINTS (Level-5 Agentic Mesh)
+# ---------------------------------------------------------
+
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class MeshAnalyzeRequest(BaseModel):
+    """Request schema for mesh analysis."""
+    company: str = Field(..., description="Company name/ticker")
+    financial_data: FinancialData
+    year: Optional[int] = None
+    industry_code: str = Field("default", description="Industry code for benchmarking")
+    
+    # Mesh configuration
+    debate_max_rounds: int = Field(5, ge=1, le=10, description="Max debate rounds")
+    critic_posture: Literal["lenient", "balanced", "strict"] = Field("balanced", description="Critic aggressiveness")
+    use_llm: bool = Field(True, description="Enable LLM-enhanced analysis")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "company": "RELIANCE",
+                "financial_data": {"financial_years": []},
+                "industry_code": "manufacturing",
+                "debate_max_rounds": 5,
+                "critic_posture": "balanced",
+                "use_llm": True
+            }
+        }
+
+
+@app.post("/mesh/analyze")
+async def mesh_analyze(req: MeshAnalyzeRequest):
+    """
+    Run Level-5 Agentic Mesh Analysis.
+    
+    This endpoint provides:
+    - Multi-agent debate-driven analysis
+    - Deterministic scoring with LLM narratives
+    - Bull/bear thesis generation
+    - Single Point of Failure identification
+    - Kill-switch signals
+    - Full audit trail
+    
+    Use this for deep-dive analysis of complex cases.
+    """
+    try:
+        from src.app.mesh.orchestrator import MeshOrchestrator
+        
+        fds = req.financial_data.financial_years
+        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+        current_data = financial_year_to_dict(sorted_fds[0])
+        historical_data = prepare_historical_data(fds)
+        year = req.year if req.year else sorted_fds[0].year
+        company = req.company.upper()
+        
+        # Configure orchestrator
+        config = {
+            "debate": {
+                "max_rounds": req.debate_max_rounds,
+                "convergence_threshold": 0.8,
+            },
+            "critic": {
+                "posture": req.critic_posture,
+            },
+        }
+        
+        # Disable LLM for all agents if requested
+        if not req.use_llm:
+            for agent_key in ["debt_analyst", "liquidity_analyst", "asset_quality_analyst",
+                              "qoe_analyst", "working_capital_analyst", "equity_analyst",
+                              "critic", "mediator", "judge"]:
+                if agent_key not in config:
+                    config[agent_key] = {}
+                config[agent_key]["use_llm"] = False
+        
+        orchestrator = MeshOrchestrator(config=config)
+        
+        # Run mesh analysis
+        final_decision = orchestrator.run(
+            company=company,
+            current_data=current_data,
+            historical_data=historical_data,
+            year=year,
+            industry_code=req.industry_code,
+        )
+        
+        if final_decision is None:
+            return JSONResponse({
+                "error": "Mesh analysis failed to produce a final decision",
+                "company": company,
+                "year": year,
+            }, status_code=500)
+        
+        # Return structured response
+        return {
+            "company": company,
+            "year": year,
+            "industry_code": req.industry_code,
+            "mesh_analysis": {
+                "score": final_decision.score,
+                "confidence": final_decision.confidence,
+                "state": final_decision.state.value if hasattr(final_decision.state, 'value') else str(final_decision.state),
+                "thesis": final_decision.thesis,
+                "anti_thesis": final_decision.anti_thesis,
+                "key_strengths": final_decision.key_strengths,
+                "key_risks": final_decision.key_risks,
+                "spof": final_decision.spof,
+                "kill_switches": final_decision.kill_switches,
+                "manual_review_required": final_decision.manual_review_required,
+                "review_reasons": getattr(final_decision, "review_reasons", []),
+                "score_breakdown": final_decision.score_breakdown,
+                "overrides_applied": final_decision.overrides_applied,
+            },
+            "config": {
+                "debate_max_rounds": req.debate_max_rounds,
+                "critic_posture": req.critic_posture,
+                "use_llm": req.use_llm,
+            }
+        }
+        
+    except ImportError as e:
+        return JSONResponse({
+            "error": f"Mesh orchestrator not available: {e}",
+            "hint": "Ensure all mesh components are properly installed"
+        }, status_code=500)
+    except Exception as e:
+        import traceback
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status_code=500)
+
+
+@app.get("/mesh/workflow")
+def get_mesh_workflow():
+    """Get the mesh workflow diagram and available agents."""
+    try:
+        from src.app.mesh.orchestrator import MeshOrchestrator
+        
+        orchestrator = MeshOrchestrator()
+        return {
+            "workflow_diagram": orchestrator.get_workflow_diagram(),
+            "agents": [
+                {"id": "debt_analyst", "name": "Debt Analyst", "type": "analyst"},
+                {"id": "liquidity_analyst", "name": "Liquidity Analyst", "type": "analyst"},
+                {"id": "asset_quality_analyst", "name": "Asset Quality Analyst", "type": "analyst"},
+                {"id": "qoe_analyst", "name": "QoE Analyst", "type": "analyst"},
+                {"id": "working_capital_analyst", "name": "Working Capital Analyst", "type": "analyst"},
+                {"id": "equity_analyst", "name": "Equity Analyst", "type": "analyst"},
+                {"id": "benchmarking_agent", "name": "Benchmarking Agent", "type": "special"},
+                {"id": "short_seller_critic", "name": "Short-Seller Critic", "type": "adversarial"},
+                {"id": "mediator", "name": "Mediator", "type": "orchestration"},
+                {"id": "judge", "name": "Judge", "type": "synthesis"},
+            ],
+            "engines": [
+                {"id": "metric_engine", "name": "Metric Engine"},
+                {"id": "trend_engine", "name": "Trend Engine"},
+                {"id": "data_quality_engine", "name": "Data Quality Engine"},
+                {"id": "correlation_engine", "name": "Correlation Engine"},
+            ],
+            "policies": [
+                {"id": "debate_termination", "name": "Debate Termination Policy"},
+                {"id": "consensus_scoring", "name": "Consensus Scoring Policy"},
+                {"id": "manual_review", "name": "Manual Review Policy"},
+            ]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/mesh/llm/status")
+def get_llm_status():
+    """Check LLM provider status and configuration."""
+    try:
+        from src.app.llm import get_available_providers, LLMConfig, create_llm_provider
+        import os
+        
+        available = get_available_providers()
+        current_provider = os.getenv("LLM_PROVIDER", "mistral")
+        current_model = os.getenv("LLM_MODEL", "mistral-large-latest")
+        
+        # Check if API key is set
+        api_key_status = {}
+        if current_provider == "mistral":
+            api_key_status["mistral"] = "set" if os.getenv("MISTRAL_API_KEY") else "not_set"
+        elif current_provider == "openai":
+            api_key_status["openai"] = "set" if os.getenv("OPENAI_API_KEY") else "not_set"
+        
+        return {
+            "current_provider": current_provider,
+            "current_model": current_model,
+            "available_providers": available,
+            "api_key_status": api_key_status,
+            "configuration": {
+                "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),
+                "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1000")),
+            }
+        }
+    except Exception as e:
+        return {"error": str(e), "available": False}
+
+
+# ---------------------------------------------------------
 # RUN SERVER
 # ---------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.main:app", host="127.0.0.1", port=8001, reload=True)
+

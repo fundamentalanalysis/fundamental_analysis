@@ -30,12 +30,19 @@ class DebtAnalystAgent(BaseMeshAgent):
     Analyzes borrowings, leverage, debt structure, and refinancing risk.
     
     Maps to the 'borrowings' module in agents_config.yaml.
+    Uses LLM for nuanced analysis when enabled.
     """
     
     agent_id = "debt_analyst"
     agent_name = "Debt Analyst"
     description = "Senior credit analyst specializing in debt and leverage analysis"
     hypothesis_budget = 6
+    
+    # System prompt for LLM
+    system_prompt = """You are a senior credit analyst specializing in debt and leverage analysis.
+Analyze the company's borrowing structure, debt sustainability, maturity profile,
+interest rate risk, and overall leverage risks. Provide insights on refinancing
+risk and debt servicing capacity. Be specific and quantitative in your analysis."""
     
     # Key facts to analyze
     KEY_FACTS = [
@@ -57,74 +64,13 @@ class DebtAnalystAgent(BaseMeshAgent):
             facts_dict = {f.key: f.value for f in facts}
             facts_used = [f.fact_id for f in facts]
             
-            # Analyze leverage
-            de_ratio = facts_dict.get("de_ratio")
-            if de_ratio is not None:
-                if de_ratio > 1.0:
-                    hyp = self.generate_hypothesis(
-                        claim=f"Company has high leverage with D/E ratio of {de_ratio:.2f}x, "
-                              f"indicating significant financial risk and vulnerability to interest rate shocks.",
-                        confidence=0.85,
-                        linked_facts=[f.fact_id for f in facts if f.key == "de_ratio"],
-                        reasoning="D/E > 1.0 indicates debt exceeds equity",
-                    )
-                    if hyp:
-                        hypotheses.append(hyp)
-                elif de_ratio < 0.5:
-                    hyp = self.generate_hypothesis(
-                        claim=f"Company maintains conservative leverage with D/E of {de_ratio:.2f}x, "
-                              f"providing financial flexibility for growth or weathering downturns.",
-                        confidence=0.80,
-                        linked_facts=[f.fact_id for f in facts if f.key == "de_ratio"],
-                    )
-                    if hyp:
-                        hypotheses.append(hyp)
+            # Rule-based hypothesis generation (deterministic)
+            hypotheses.extend(self._generate_rule_based_hypotheses(facts, facts_dict))
             
-            # Analyze interest coverage
-            icr = facts_dict.get("interest_coverage")
-            if icr is not None:
-                if icr < 1.5:
-                    hyp = self.generate_hypothesis(
-                        claim=f"Critical interest coverage of {icr:.2f}x - earnings barely cover "
-                              f"interest payments. High default risk if earnings decline.",
-                        confidence=0.90,
-                        linked_facts=[f.fact_id for f in facts if f.key == "interest_coverage"],
-                    )
-                    if hyp:
-                        hypotheses.append(hyp)
-                elif icr > 5.0:
-                    hyp = self.generate_hypothesis(
-                        claim=f"Strong interest coverage of {icr:.2f}x provides substantial cushion "
-                              f"for debt servicing even under stress scenarios.",
-                        confidence=0.75,
-                        linked_facts=[f.fact_id for f in facts if f.key == "interest_coverage"],
-                    )
-                    if hyp:
-                        hypotheses.append(hyp)
-            
-            # Analyze refinancing risk
-            st_debt_pct = facts_dict.get("maturity_lt_1y_pct")
-            if st_debt_pct is not None and st_debt_pct > 0.50:
-                hyp = self.generate_hypothesis(
-                    claim=f"Significant refinancing risk: {st_debt_pct:.0%} of debt matures within 1 year. "
-                          f"Company needs to refinance or repay substantial amounts soon.",
-                    confidence=0.85,
-                    linked_facts=[f.fact_id for f in facts if f.key == "maturity_lt_1y_pct"],
-                )
-                if hyp:
-                    hypotheses.append(hyp)
-            
-            # Analyze debt growth vs earnings
-            debt_vs_ebitda = facts_dict.get("debt_vs_ebitda_cagr_diff")
-            if debt_vs_ebitda is not None and debt_vs_ebitda > 5:
-                hyp = self.generate_hypothesis(
-                    claim=f"Debt growing faster than earnings capacity: {debt_vs_ebitda:.1f}pp differential. "
-                          f"Unsustainable trajectory that may lead to credit stress.",
-                    confidence=0.80,
-                    linked_facts=[f.fact_id for f in facts if "cagr" in f.key.lower()],
-                )
-                if hyp:
-                    hypotheses.append(hyp)
+            # LLM-enhanced hypothesis (if enabled)
+            llm_hyp = self._generate_llm_hypothesis(facts, facts_dict)
+            if llm_hyp:
+                hypotheses.append(llm_hyp)
             
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)
@@ -135,6 +81,8 @@ class DebtAnalystAgent(BaseMeshAgent):
                 facts_used=facts_used,
                 execution_time_ms=execution_time,
                 success=True,
+                llm_calls=self._llm_calls,
+                llm_tokens_used=self._llm_tokens,
             )
             
         except Exception as e:
@@ -148,6 +96,170 @@ class DebtAnalystAgent(BaseMeshAgent):
                 success=False,
                 error_message=str(e),
             )
+    
+    def _generate_rule_based_hypotheses(
+        self, facts: List[Fact], facts_dict: Dict[str, Any]
+    ) -> List[Hypothesis]:
+        """Generate hypotheses from deterministic rules."""
+        hypotheses = []
+        
+        # Analyze leverage
+        de_ratio = facts_dict.get("de_ratio")
+        if de_ratio is not None:
+            if de_ratio > 1.0:
+                hyp = self.generate_hypothesis(
+                    claim=f"Company has high leverage with D/E ratio of {de_ratio:.2f}x, "
+                          f"indicating significant financial risk and vulnerability to interest rate shocks.",
+                    confidence=0.85,
+                    linked_facts=[f.fact_id for f in facts if f.key == "de_ratio"],
+                    reasoning="D/E > 1.0 indicates debt exceeds equity",
+                )
+                if hyp:
+                    hypotheses.append(hyp)
+            elif de_ratio < 0.5:
+                hyp = self.generate_hypothesis(
+                    claim=f"Company maintains conservative leverage with D/E of {de_ratio:.2f}x, "
+                          f"providing financial flexibility for growth or weathering downturns.",
+                    confidence=0.80,
+                    linked_facts=[f.fact_id for f in facts if f.key == "de_ratio"],
+                )
+                if hyp:
+                    hypotheses.append(hyp)
+        
+        # Analyze interest coverage
+        icr = facts_dict.get("interest_coverage")
+        if icr is not None:
+            if icr < 1.5:
+                hyp = self.generate_hypothesis(
+                    claim=f"Critical interest coverage of {icr:.2f}x - earnings barely cover "
+                          f"interest payments. High default risk if earnings decline.",
+                    confidence=0.90,
+                    linked_facts=[f.fact_id for f in facts if f.key == "interest_coverage"],
+                )
+                if hyp:
+                    hypotheses.append(hyp)
+            elif icr > 5.0:
+                hyp = self.generate_hypothesis(
+                    claim=f"Strong interest coverage of {icr:.2f}x provides substantial cushion "
+                          f"for debt servicing even under stress scenarios.",
+                    confidence=0.75,
+                    linked_facts=[f.fact_id for f in facts if f.key == "interest_coverage"],
+                )
+                if hyp:
+                    hypotheses.append(hyp)
+        
+        # Analyze refinancing risk
+        st_debt_pct = facts_dict.get("maturity_lt_1y_pct")
+        if st_debt_pct is not None and st_debt_pct > 0.50:
+            hyp = self.generate_hypothesis(
+                claim=f"Significant refinancing risk: {st_debt_pct:.0%} of debt matures within 1 year. "
+                      f"Company needs to refinance or repay substantial amounts soon.",
+                confidence=0.85,
+                linked_facts=[f.fact_id for f in facts if f.key == "maturity_lt_1y_pct"],
+            )
+            if hyp:
+                hypotheses.append(hyp)
+        
+        # Analyze debt growth vs earnings
+        debt_vs_ebitda = facts_dict.get("debt_vs_ebitda_cagr_diff")
+        if debt_vs_ebitda is not None and debt_vs_ebitda > 5:
+            hyp = self.generate_hypothesis(
+                claim=f"Debt growing faster than earnings capacity: {debt_vs_ebitda:.1f}pp differential. "
+                      f"Unsustainable trajectory that may lead to credit stress.",
+                confidence=0.80,
+                linked_facts=[f.fact_id for f in facts if "cagr" in f.key.lower()],
+            )
+            if hyp:
+                hypotheses.append(hyp)
+        
+        return hypotheses
+    
+    def _generate_llm_hypothesis(
+        self, facts: List[Fact], facts_dict: Dict[str, Any]
+    ) -> Optional[Hypothesis]:
+        """Generate an LLM-enhanced hypothesis for nuanced analysis."""
+        if not self.use_llm or not facts:
+            return None
+        
+        # Build context for LLM
+        context_parts = []
+        if de := facts_dict.get("de_ratio"):
+            context_parts.append(f"D/E ratio: {de:.2f}x")
+        if icr := facts_dict.get("interest_coverage"):
+            context_parts.append(f"Interest coverage: {icr:.2f}x")
+        if debt_ebitda := facts_dict.get("debt_ebitda"):
+            context_parts.append(f"Debt/EBITDA: {debt_ebitda:.2f}x")
+        if total_debt := facts_dict.get("total_debt"):
+            context_parts.append(f"Total debt: {total_debt:,.0f}")
+        if st_pct := facts_dict.get("maturity_lt_1y_pct"):
+            context_parts.append(f"Short-term debt %: {st_pct:.0%}")
+        if floating := facts_dict.get("floating_share"):
+            context_parts.append(f"Floating rate debt %: {floating:.0%}")
+        
+        if not context_parts:
+            return None
+        
+        prompt = f"""Analyze this company's debt profile and provide ONE key insight that isn't obvious from the numbers alone.
+
+Key Metrics:
+{chr(10).join("- " + c for c in context_parts)}
+
+Consider:
+1. What does this debt structure tell us about management's capital allocation strategy?
+2. Are there any hidden risks or strengths not obvious from individual metrics?
+3. How might this debt profile perform under stress (rising rates, earnings decline)?
+
+Provide your response in this EXACT format:
+CLAIM: [One specific, actionable insight about the debt profile]
+CONFIDENCE: [0.0-1.0]
+REASONING: [1-2 sentences explaining your logic]"""
+
+        response = self.call_llm(prompt, max_tokens=300)
+        
+        if not response:
+            return None
+        
+        # Parse LLM response
+        return self._parse_llm_response(response, facts)
+    
+    def _parse_llm_response(
+        self, response: str, facts: List[Fact]
+    ) -> Optional[Hypothesis]:
+        """Parse LLM response into a hypothesis."""
+        try:
+            claim = ""
+            confidence = 0.65
+            reasoning = ""
+            
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if line.upper().startswith("CLAIM:"):
+                    claim = line[6:].strip()
+                elif line.upper().startswith("CONFIDENCE:"):
+                    try:
+                        conf_str = line[11:].strip()
+                        # Handle cases like "0.75" or "75%"
+                        if "%" in conf_str:
+                            confidence = float(conf_str.replace("%", "")) / 100
+                        else:
+                            confidence = float(conf_str)
+                        confidence = max(0.0, min(1.0, confidence))
+                    except ValueError:
+                        confidence = 0.65
+                elif line.upper().startswith("REASONING:"):
+                    reasoning = line[10:].strip()
+            
+            if claim:
+                return self.generate_hypothesis(
+                    claim=claim,
+                    confidence=confidence,
+                    linked_facts=[f.fact_id for f in facts[:5]],
+                    reasoning=f"[LLM] {reasoning}" if reasoning else "[LLM-generated]",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM response: {e}")
+        
+        return None
 
 
 class LiquidityAnalystAgent(BaseMeshAgent):
