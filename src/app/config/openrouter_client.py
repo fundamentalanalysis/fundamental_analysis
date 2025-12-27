@@ -5,11 +5,11 @@
 """
 OpenRouter client for using reasoning models in the debate system.
 
+Uses the OpenAI SDK with OpenRouter's base_url.
 Uses the deepseek-r1t-chimera model for adversarial debate reasoning.
 """
 
 import os
-import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ class ReasoningResponse:
 
 class OpenRouterClient:
     """
-    Client for OpenRouter API supporting streaming chat completions.
+    Client for OpenRouter API using OpenAI SDK.
     
     Example usage:
         client = OpenRouterClient()
@@ -52,17 +52,20 @@ class OpenRouterClient:
         self._client = None
     
     def _get_client(self):
-        """Lazy initialization of the OpenRouter client."""
+        """Lazy initialization of the OpenAI client with OpenRouter base_url."""
         if self._client is None:
             try:
-                from openrouter import OpenRouter
-                self._client = OpenRouter(api_key=self.api_key)
+                from openai import OpenAI
+                self._client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=self.api_key,
+                )
             except ImportError:
-                logger.error("openrouter package not installed. Run: pip install openrouter")
-                raise ImportError("openrouter package required. Install with: pip install openrouter")
+                logger.error("openai package not installed. Run: pip install openai")
+                raise ImportError("openai package required. Install with: pip install openai")
         return self._client
     
-    async def chat_async(
+    def chat_sync(
         self,
         messages: List[Dict[str, str]],
         model: str = DEFAULT_REASONING_MODEL,
@@ -70,7 +73,7 @@ class OpenRouterClient:
         max_tokens: int = 2000,
     ) -> ReasoningResponse:
         """
-        Send a chat request and get the full response (async, with streaming internally).
+        Send a chat request and get the full response (synchronous).
         
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -84,77 +87,50 @@ class OpenRouterClient:
         try:
             client = self._get_client()
             
-            # Use streaming to collect the response
-            stream = await client.chat.send(
+            # Use OpenAI SDK with OpenRouter
+            response = client.chat.completions.create(
+                extra_headers={
+                    "HTTP-Referer": "https://fundamental-analysis.local",
+                    "X-Title": "Fundamental Analysis Mesh",
+                },
                 model=model,
                 messages=messages,
-                stream=True,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
             
-            content_parts = []
-            thinking_parts = []
+            # Extract content from response
+            content = ""
+            thinking = None
+            usage = None
             
-            async for chunk in stream:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta:
-                    if hasattr(delta, 'content') and delta.content:
-                        content_parts.append(delta.content)
-                    # Some reasoning models include thinking in a separate field
-                    if hasattr(delta, 'reasoning') and delta.reasoning:
-                        thinking_parts.append(delta.reasoning)
+            if response.choices and len(response.choices) > 0:
+                choice = response.choices[0]
+                if hasattr(choice, 'message') and choice.message:
+                    content = choice.message.content or ""
+                    # Some models include reasoning in a separate field
+                    if hasattr(choice.message, 'reasoning'):
+                        thinking = choice.message.reasoning
+            
+            if hasattr(response, 'usage') and response.usage:
+                usage = {
+                    "prompt_tokens": getattr(response.usage, 'prompt_tokens', 0),
+                    "completion_tokens": getattr(response.usage, 'completion_tokens', 0),
+                    "total_tokens": getattr(response.usage, 'total_tokens', 0),
+                }
+            
+            logger.info(f"[OpenRouter] Response received: {len(content)} chars, model: {model}")
             
             return ReasoningResponse(
-                content="".join(content_parts),
-                thinking="".join(thinking_parts) if thinking_parts else None,
+                content=content,
+                thinking=thinking,
                 model=model,
+                usage=usage,
             )
             
         except Exception as e:
             logger.error(f"OpenRouter chat failed: {e}")
             raise
-    
-    def chat_sync(
-        self,
-        messages: List[Dict[str, str]],
-        model: str = DEFAULT_REASONING_MODEL,
-        temperature: float = 0.3,
-        max_tokens: int = 2000,
-    ) -> ReasoningResponse:
-        """
-        Synchronous wrapper for chat_async.
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-            model: Model identifier to use
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens in response
-            
-        Returns:
-            ReasoningResponse with content and optional thinking
-        """
-        try:
-            # Try to get existing event loop
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If already in async context, create a new thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        self.chat_async(messages, model, temperature, max_tokens)
-                    )
-                    return future.result()
-            else:
-                return loop.run_until_complete(
-                    self.chat_async(messages, model, temperature, max_tokens)
-                )
-        except RuntimeError:
-            # No event loop exists
-            return asyncio.run(
-                self.chat_async(messages, model, temperature, max_tokens)
-            )
     
     def is_available(self) -> bool:
         """Check if the client is properly configured."""

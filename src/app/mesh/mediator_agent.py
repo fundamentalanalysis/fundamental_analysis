@@ -17,14 +17,21 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import time
 import logging
+import json
+import re
 
 from .base_agent import BaseMeshAgent, AgentOutput
 from src.app.blackboard.models import (
     Hypothesis, Attack, Resolution, HypothesisStatus
 )
 from src.app.blackboard.store import Blackboard
+from src.app.llm.factory import get_debate_provider
+from src.app.llm.provider import Message
 
 logger = logging.getLogger(__name__)
+
+# Model for reasoning/debate tasks
+DEBATE_MODEL = "magistral-medium-latest"
 
 
 class MediatorAgent(BaseMeshAgent):
@@ -45,12 +52,25 @@ class MediatorAgent(BaseMeshAgent):
     # Debate configuration
     max_rounds: int = 5
     convergence_threshold: float = 0.8
+    use_llm: bool = True
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         if config:
             self.max_rounds = config.get("max_rounds", self.max_rounds)
             self.convergence_threshold = config.get("convergence_threshold", self.convergence_threshold)
+            if "use_llm" in config:
+                self.use_llm = config["use_llm"]
+        
+        # Initialize Mistral LLM provider for debate resolution
+        self._llm_provider = None
+        if self.use_llm:
+            try:
+                self._llm_provider = get_debate_provider()
+                logger.info(f"[Mediator] Using LLM provider for resolution: {self._llm_provider.provider_type.value}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM provider: {e}")
+                self._llm_provider = None
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Run a debate round and attempt resolution."""
@@ -130,12 +150,59 @@ class MediatorAgent(BaseMeshAgent):
         """
         Run a single debate round and produce resolution.
         
-        Resolution logic:
+        Resolution logic (rule-based fallback):
         1. Hypotheses with no attacks -> resolved
         2. Hypotheses with weak attacks -> resolved (in favor of hypothesis)
         3. Hypotheses with strong attacks -> need examination
         4. Attacked hypotheses with counter-evidence -> may remain unresolved
+        
+        If LLM is available, uses reasoning model for more nuanced resolution.
         """
+        llm_rationale = ""
+        
+        # Try LLM-based resolution first
+        logger.info(f"[Mediator] LLM provider available: {self._llm_provider is not None}")
+        if self._llm_provider:
+            try:
+                logger.info(f"[Mediator] Calling LLM for resolution...")
+                llm_resolved_hyps, llm_resolved_attacks, llm_unresolved, llm_rationale = \
+                    self._generate_llm_resolution(round_number, hypotheses, attacks)
+                
+                logger.info(f"[Mediator] LLM returned: {len(llm_resolved_hyps)} resolved hyps, {len(llm_resolved_attacks)} resolved attacks, {len(llm_unresolved)} unresolved")
+                if llm_resolved_hyps or llm_resolved_attacks or llm_unresolved:
+                    logger.info(f"[LLM] Using reasoning model for debate resolution")
+                    
+                    # Use LLM resolution results
+                    resolved_hypotheses = llm_resolved_hyps
+                    resolved_attacks = llm_resolved_attacks
+                    unresolved_items = llm_unresolved
+                    
+                    # Calculate convergence and quality
+                    total_items = len(hypotheses) + len(attacks)
+                    resolved_count = len(resolved_hypotheses) + len(resolved_attacks)
+                    convergence_score = resolved_count / total_items if total_items > 0 else 1.0
+                    
+                    debate_quality = self._assess_debate_quality(
+                        hypotheses, attacks, resolved_hypotheses, resolved_attacks
+                    )
+                    
+                    rationale = self._generate_rationale(
+                        round_number, resolved_hypotheses, resolved_attacks, unresolved_items, llm_rationale
+                    )
+                    
+                    return Resolution(
+                        round_number=round_number,
+                        resolved_hypotheses=resolved_hypotheses,
+                        resolved_attacks=resolved_attacks,
+                        unresolved_items=unresolved_items,
+                        rationale=rationale,
+                        convergence_score=convergence_score,
+                        debate_quality=debate_quality,
+                    )
+            except Exception as e:
+                logger.warning(f"LLM resolution failed, using rule-based: {e}")
+        
+        # Fall back to rule-based resolution
         resolved_hypotheses = []
         resolved_attacks = []
         unresolved_items = []
@@ -272,6 +339,7 @@ class MediatorAgent(BaseMeshAgent):
         resolved_hyps: List[str],
         resolved_attacks: List[str],
         unresolved: List[str],
+        llm_rationale: Optional[str] = None,
     ) -> str:
         """Generate human-readable rationale for the resolution."""
         parts = [f"Round {round_number} resolution:"]
@@ -286,4 +354,152 @@ class MediatorAgent(BaseMeshAgent):
         if not unresolved:
             parts.append("Full convergence achieved.")
         
+        # Add LLM-generated reasoning if available
+        if llm_rationale:
+            parts.append(f"\n\n[LLM Analysis] {llm_rationale}")
+        
         return " ".join(parts)
+    
+    def _generate_llm_resolution(
+        self,
+        round_number: int,
+        hypotheses: List[Hypothesis],
+        attacks: List[Attack],
+    ) -> Tuple[List[str], List[str], List[str], str]:
+        """
+        Use the Mistral reasoning model to determine debate resolution.
+        
+        Returns:
+            Tuple of (resolved_hypotheses, resolved_attacks, unresolved_items, rationale)
+        """
+        if not self._llm_provider:
+            return [], [], [], ""
+        
+        # Build context for the reasoning model
+        hypotheses_context = "\n".join([
+            f"- HYP_{h.hypothesis_id[:8]}: \"{h.claim}\" (confidence: {h.confidence:.2f}, author: {h.agent_id})"
+            for h in hypotheses
+        ])
+        
+        attacks_context = "\n".join([
+            f"- ATK_{a.attack_id[:8]} -> HYP_{a.target_hypothesis_id[:8]}: \"{a.claim}\" "
+            f"(type: {a.contradiction_type}, severity: {a.severity.name}, confidence: {a.confidence:.2f})"
+            for a in attacks
+        ])
+        
+        system_prompt = """You are a Debate Mediator analyzing financial analysis hypotheses and attacks.
+Your role is to:
+1. Determine which hypotheses are well-supported and should be RESOLVED (accepted)
+2. Determine which attacks are valid and which should be DISMISSED
+3. Identify items that remain CONTESTED and need more analysis
+
+Output a JSON object with:
+- resolved_hypotheses: list of hypothesis IDs (e.g., ["HYP_abc12345"])
+- resolved_attacks: list of attack IDs to dismiss (e.g., ["ATK_xyz98765"])
+- unresolved: list of contested item IDs
+- rationale: Brief explanation of your reasoning (max 200 chars)
+
+Consider:
+- Hypothesis with no attacks -> resolved
+- Strong hypothesis vs weak attack -> hypothesis resolved, attack dismissed
+- Strong attack vs weak hypothesis -> attack stands, hypothesis unresolved
+- Close confidence scores -> both unresolved
+
+Output ONLY valid JSON. No explanations outside JSON."""
+
+        user_prompt = f"""DEBATE ROUND {round_number}
+
+HYPOTHESES:
+{hypotheses_context if hypotheses_context else "No hypotheses"}
+
+ATTACKS:
+{attacks_context if attacks_context else "No attacks"}
+
+Analyze and determine resolution. Output JSON only."""
+
+        try:
+            # Use Mistral provider with reasoning model
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt),
+            ]
+            
+            response = self._llm_provider.complete(
+                messages=messages,
+                model=DEBATE_MODEL,
+                temperature=0.3,
+                max_tokens=1500,
+            )
+            
+            if not response.success:
+                logger.warning(f"LLM resolution failed: {response.error_message}")
+                return [], [], [], ""
+            
+            # Parse the response
+            return self._parse_llm_resolution(response.content, hypotheses, attacks)
+            
+        except Exception as e:
+            logger.warning(f"LLM resolution generation failed: {e}")
+            return [], [], [], ""
+    
+    def _parse_llm_resolution(
+        self,
+        response_content: str,
+        hypotheses: List[Hypothesis],
+        attacks: List[Attack],
+    ) -> Tuple[List[str], List[str], List[str], str]:
+        """Parse LLM resolution response."""
+        try:
+            # Extract JSON from response
+            content = response_content.strip()
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            # Try to find JSON object in the content
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group()
+            
+            data = json.loads(content)
+            
+            # Map short IDs back to full IDs
+            hyp_map = {f"HYP_{h.hypothesis_id[:8]}": h.hypothesis_id for h in hypotheses}
+            atk_map = {f"ATK_{a.attack_id[:8]}": a.attack_id for a in attacks}
+            
+            resolved_hyps = []
+            for h_id in data.get("resolved_hypotheses", []):
+                if h_id in hyp_map:
+                    resolved_hyps.append(hyp_map[h_id])
+                elif h_id.startswith("HYP_"):
+                    # Try partial match
+                    for short_id, full_id in hyp_map.items():
+                        if h_id in short_id or short_id in h_id:
+                            resolved_hyps.append(full_id)
+                            break
+            
+            resolved_attacks = []
+            for a_id in data.get("resolved_attacks", []):
+                if a_id in atk_map:
+                    resolved_attacks.append(atk_map[a_id])
+                elif a_id.startswith("ATK_"):
+                    # Try partial match
+                    for short_id, full_id in atk_map.items():
+                        if a_id in short_id or short_id in a_id:
+                            resolved_attacks.append(full_id)
+                            break
+            
+            unresolved = data.get("unresolved", [])
+            rationale = data.get("rationale", "")[:500]
+            
+            logger.info(f"[LLM] Resolution: {len(resolved_hyps)} hypotheses resolved, "
+                       f"{len(resolved_attacks)} attacks dismissed, {len(unresolved)} contested")
+            
+            return resolved_hyps, resolved_attacks, unresolved, rationale
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse LLM resolution response: {e}")
+            logger.debug(f"Raw response: {response_content[:500]}")
+            return [], [], [], ""
+

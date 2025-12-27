@@ -144,7 +144,7 @@ class MeshOrchestrator:
         debate_config = self.config.get("debate", {})
         self.debate_policy = DebateTerminationPolicy(
             max_rounds=debate_config.get("max_rounds", 5),
-            max_time_seconds=debate_config.get("max_time_seconds", 60),
+            max_time_seconds=debate_config.get("max_time_seconds", 300),
             stagnation_threshold=debate_config.get("stagnation_threshold", 0.05),
             convergence_threshold=debate_config.get("convergence_threshold", 0.8),
         )

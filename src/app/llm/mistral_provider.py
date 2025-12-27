@@ -108,15 +108,33 @@ class MistralProvider(LLMProvider):
             # Extract response
             choice = response.choices[0]
             
+            # Handle different response formats (magistral models return ThinkChunk objects)
+            content = choice.message.content
+            if isinstance(content, list):
+                # Magistral models return list of ThinkChunk/TextChunk objects
+                # Extract text from all chunks
+                text_parts = []
+                for chunk in content:
+                    if hasattr(chunk, 'text'):
+                        text_parts.append(chunk.text)
+                    elif hasattr(chunk, 'thinking'):
+                        # ThinkChunk with nested content
+                        for inner in chunk.thinking:
+                            if hasattr(inner, 'text'):
+                                text_parts.append(inner.text)
+                content = "".join(text_parts)
+            elif content is None:
+                content = ""
+            
             # Log success
-            response_preview = choice.message.content[:100] if choice.message.content else ""
+            response_preview = content[:100] if content else ""
             logger.info(
                 f"✅ MISTRAL RESPONSE: {response.usage.total_tokens} tokens, "
                 f"{latency:.0f}ms, response='{response_preview}...'"
             )
             
             return LLMResponse(
-                content=choice.message.content,
+                content=content,
                 model=response.model,
                 provider="mistral",
                 usage={
@@ -172,8 +190,23 @@ class MistralProvider(LLMProvider):
             latency = (time.time() - start_time) * 1000
             choice = response.choices[0]
             
+            # Handle different response formats (magistral models return ThinkChunk objects)
+            content = choice.message.content
+            if isinstance(content, list):
+                text_parts = []
+                for chunk in content:
+                    if hasattr(chunk, 'text'):
+                        text_parts.append(chunk.text)
+                    elif hasattr(chunk, 'thinking'):
+                        for inner in chunk.thinking:
+                            if hasattr(inner, 'text'):
+                                text_parts.append(inner.text)
+                content = "".join(text_parts)
+            elif content is None:
+                content = ""
+            
             return LLMResponse(
-                content=choice.message.content,
+                content=content,
                 model=response.model,
                 provider="mistral",
                 usage={

@@ -13,10 +13,15 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 
 def get_llm_client():
     return OpenAI(api_key=OPENAI_API_KEY)
+
+
+# Import OpenRouter client
+from .openrouter_client import OpenRouterClient, get_openrouter_client, ReasoningResponse
 
 
 # ---------------------------------------------------------
@@ -55,7 +60,11 @@ __all__ = [
     'GlobalConfig',
     'OPENAI_API_KEY',
     'OPENAI_MODEL',
+    'OPENROUTER_API_KEY',
     'get_llm_client',
+    'get_openrouter_client',
+    'OpenRouterClient',
+    'ReasoningResponse',
     'load_agents_config',
     'get_module_config',
     'reload_config',

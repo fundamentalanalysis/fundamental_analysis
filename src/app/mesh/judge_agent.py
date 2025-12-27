@@ -8,7 +8,7 @@ Judge Agent produces the final decision memo.
 
 Key responsibilities:
 - Synthesize all agent outputs
-- Generate thesis and anti-thesis
+- Generate thesis and anti-thesis using LLM
 - Identify single point of failure
 - Define kill-switch signals
 - Produce executive-grade output
@@ -25,6 +25,8 @@ from src.app.blackboard.models import (
     Fact, ConsensusState, HypothesisStatus
 )
 from src.app.blackboard.store import Blackboard
+from src.app.llm.factory import get_default_provider
+from src.app.llm.provider import Message
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class JudgeAgent(BaseMeshAgent):
     
     The Judge:
     - NEVER invents the math (uses deterministic scores)
-    - Narrates based on resolution outcomes
+    - Uses LLM for narrative synthesis
     - Identifies SPOF and kill-switches
     - Produces audit-ready output
     """
@@ -48,6 +50,18 @@ class JudgeAgent(BaseMeshAgent):
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
+        if config and "use_llm" in config:
+            self.use_llm = config["use_llm"]
+        
+        # Initialize LLM provider
+        self._llm_provider = None
+        if self.use_llm:
+            try:
+                self._llm_provider = get_default_provider()
+                logger.info(f"[Judge] Using LLM provider: {self._llm_provider.provider_type.value}")
+            except Exception as e:
+                logger.warning(f"[Judge] Failed to initialize LLM provider: {e}")
+                self._llm_provider = None
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Generate final decision."""
@@ -106,9 +120,15 @@ class JudgeAgent(BaseMeshAgent):
             facts, resolutions, data_quality, overrides
         )
         
-        # Build thesis and anti-thesis
-        thesis = self._build_thesis(facts, hypotheses, resolutions)
-        anti_thesis = self._build_anti_thesis(attacks, overrides)
+        # Build thesis and anti-thesis (use LLM if available)
+        if self._llm_provider:
+            thesis, anti_thesis = self._generate_llm_synthesis(
+                facts, hypotheses, attacks, resolutions, overrides, 
+                final_score, state, confidence
+            )
+        else:
+            thesis = self._build_thesis(facts, hypotheses, resolutions)
+            anti_thesis = self._build_anti_thesis(attacks, overrides)
         
         # Extract key strengths and risks
         strengths, risks = self._extract_strengths_and_risks(hypotheses, attacks)
@@ -543,3 +563,132 @@ class JudgeAgent(BaseMeshAgent):
         breakdown["profitability"] = int(min(100, max(0, (roe or 0.10) * 500)))
         
         return breakdown
+    
+    def _generate_llm_synthesis(
+        self,
+        facts: List[Fact],
+        hypotheses: List[Hypothesis],
+        attacks: List[Attack],
+        resolutions: List[Resolution],
+        overrides: List[Override],
+        final_score: float,
+        state: ConsensusState,
+        confidence: float,
+    ) -> Tuple[str, str]:
+        """
+        Use LLM to generate professional thesis and anti-thesis narratives.
+        
+        Returns:
+            Tuple of (thesis, anti_thesis)
+        """
+        if not self._llm_provider:
+            return self._build_thesis(facts, hypotheses, resolutions), \
+                   self._build_anti_thesis(attacks, overrides)
+        
+        # Build context for LLM
+        facts_dict = {f.key: f.value for f in facts}
+        
+        # Key metrics summary
+        key_metrics = []
+        if facts_dict.get("de_ratio") is not None:
+            key_metrics.append(f"D/E Ratio: {facts_dict['de_ratio']:.2f}x")
+        if facts_dict.get("current_ratio") is not None:
+            key_metrics.append(f"Current Ratio: {facts_dict['current_ratio']:.2f}x")
+        if facts_dict.get("interest_coverage") is not None:
+            key_metrics.append(f"Interest Coverage: {facts_dict['interest_coverage']:.2f}x")
+        if facts_dict.get("roe") is not None:
+            key_metrics.append(f"ROE: {facts_dict['roe']*100:.1f}%")
+        if facts_dict.get("qoe") is not None:
+            key_metrics.append(f"QoE (CFO/NI): {facts_dict['qoe']:.2f}x")
+        
+        # Hypothesis summary
+        hyp_summary = "\n".join([
+            f"- [{h.status.name}] {h.claim[:100]} (conf: {h.confidence:.2f})"
+            for h in hypotheses[:10]
+        ])
+        
+        # Attack summary
+        attack_summary = "\n".join([
+            f"- [{a.severity.name}] {a.claim[:80]}"
+            for a in attacks[:5]
+        ])
+        
+        # Override summary
+        override_summary = "\n".join([
+            f"- {o.rule_name}: {o.description[:60]}"
+            for o in overrides
+        ])
+        
+        system_prompt = """You are a senior investment analyst writing an executive summary for an investment committee.
+
+Generate two sections:
+1. THESIS (Bull Case): A professional 2-3 sentence investment thesis highlighting the company's strengths
+2. ANTI_THESIS (Bear Case): A professional 2-3 sentence counter-argument highlighting key risks
+
+Rules:
+- Be concise and professional
+- Use specific numbers from the metrics provided
+- Thesis should highlight positives, Anti-thesis should highlight concerns
+- Output ONLY in this exact JSON format, no other text:
+{"thesis": "BULL CASE: ...", "anti_thesis": "BEAR CASE: ..."}"""
+
+        user_prompt = f"""FINAL SCORE: {final_score:.0f}/100
+CONFIDENCE: {confidence:.2f}
+CONSENSUS STATE: {state.name}
+
+KEY METRICS:
+{chr(10).join(key_metrics)}
+
+ANALYST HYPOTHESES:
+{hyp_summary if hyp_summary else "No hypotheses"}
+
+CRITIC ATTACKS:
+{attack_summary if attack_summary else "No attacks"}
+
+CORRELATION OVERRIDES:
+{override_summary if override_summary else "No overrides triggered"}
+
+Generate the thesis and anti_thesis JSON."""
+
+        try:
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt),
+            ]
+            
+            response = self._llm_provider.complete(
+                messages=messages,
+                temperature=0.4,
+                max_tokens=500,
+            )
+            
+            if not response.success:
+                logger.warning(f"[Judge] LLM synthesis failed: {response.error_message}")
+                return self._build_thesis(facts, hypotheses, resolutions), \
+                       self._build_anti_thesis(attacks, overrides)
+            
+            # Track LLM usage
+            self._llm_calls += 1
+            self._llm_tokens += response.usage.get("total_tokens", 0)
+            
+            # Parse response
+            import json
+            import re
+            
+            content = response.content.strip()
+            # Extract JSON from response
+            json_match = re.search(r'\{[^{}]*"thesis"[^{}]*"anti_thesis"[^{}]*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group()
+            
+            result = json.loads(content)
+            thesis = result.get("thesis", self._build_thesis(facts, hypotheses, resolutions))
+            anti_thesis = result.get("anti_thesis", self._build_anti_thesis(attacks, overrides))
+            
+            logger.info(f"[Judge] LLM synthesis complete: thesis={len(thesis)} chars, anti_thesis={len(anti_thesis)} chars")
+            return thesis, anti_thesis
+            
+        except Exception as e:
+            logger.warning(f"[Judge] LLM synthesis error: {e}")
+            return self._build_thesis(facts, hypotheses, resolutions), \
+                   self._build_anti_thesis(attacks, overrides)

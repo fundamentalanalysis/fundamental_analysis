@@ -17,14 +17,21 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import time
 import logging
+import json
+import re
 
 from .base_agent import BaseMeshAgent, AgentOutput
 from src.app.blackboard.models import (
     Hypothesis, Fact, Attack, HypothesisStatus, Severity
 )
 from src.app.blackboard.store import Blackboard
+from src.app.llm.factory import get_debate_provider
+from src.app.llm.provider import Message
 
 logger = logging.getLogger(__name__)
+
+# Model for reasoning/debate tasks
+DEBATE_MODEL = "magistral-medium-latest"
 
 
 class ShortSellerCriticAgent(BaseMeshAgent):
@@ -64,10 +71,31 @@ class ShortSellerCriticAgent(BaseMeshAgent):
         },
     }
     
+    # LLM configuration
+    use_llm: bool = True
+    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
+        logger.info(f"[Critic] Initializing ShortSellerCriticAgent with config: {config}")
+        
         if config and "posture" in config:
             self.posture = config["posture"]
+        if config and "use_llm" in config:
+            self.use_llm = config["use_llm"]
+        
+        # Initialize Mistral LLM provider for debate reasoning
+        self._llm_provider = None
+        logger.info(f"[Critic] use_llm={self.use_llm}")
+        if self.use_llm:
+            try:
+                logger.info("[Critic] Creating LLM provider...")
+                self._llm_provider = get_debate_provider()
+                logger.info(f"[Critic] ✅ LLM provider ready: {self._llm_provider.provider_type.value}")
+            except Exception as e:
+                logger.warning(f"[Critic] ❌ Failed to initialize LLM provider: {e}")
+                self._llm_provider = None
+        else:
+            logger.info("[Critic] LLM disabled, using rule-based attacks")
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Execute adversarial analysis and generate attacks."""
@@ -101,9 +129,28 @@ class ShortSellerCriticAgent(BaseMeshAgent):
             posture_config = self.POSTURE_CONFIG[self.posture]
             
             for hypothesis in all_debatable:
-                hypothesis_attacks = self.attack_hypothesis(
-                    hypothesis, facts_dict, all_facts, posture_config
-                )
+                # Try LLM-based attack generation first
+                if self._llm_provider:
+                    try:
+                        llm_attacks = self._generate_llm_attacks(hypothesis, facts_dict, all_facts, posture_config)
+                        if llm_attacks:
+                            logger.info(f"[LLM] Generated {len(llm_attacks)} attacks for hypothesis: {hypothesis.hypothesis_id[:8]}...")
+                            hypothesis_attacks = llm_attacks
+                        else:
+                            # Fallback to rule-based
+                            hypothesis_attacks = self.attack_hypothesis(
+                                hypothesis, facts_dict, all_facts, posture_config
+                            )
+                    except Exception as e:
+                        logger.warning(f"LLM attack generation failed, using rule-based: {e}")
+                        hypothesis_attacks = self.attack_hypothesis(
+                            hypothesis, facts_dict, all_facts, posture_config
+                        )
+                else:
+                    # Use rule-based attack generation
+                    hypothesis_attacks = self.attack_hypothesis(
+                        hypothesis, facts_dict, all_facts, posture_config
+                    )
                 
                 for attack in hypothesis_attacks[:posture_config["max_attacks_per_hypothesis"]]:
                     blackboard.write_attack(attack, self.agent_id)
@@ -302,3 +349,171 @@ class ShortSellerCriticAgent(BaseMeshAgent):
         ]
         claim_lower = claim.lower()
         return any(word in claim_lower for word in positive_words)
+    
+    def _generate_llm_attacks(
+        self,
+        hypothesis: Hypothesis,
+        facts_dict: Dict[str, Any],
+        all_facts: List[Fact],
+        posture_config: Dict[str, Any],
+    ) -> List[Attack]:
+        """
+        Generate attacks using the Mistral reasoning model.
+        
+        Uses a reasoning model to analyze the hypothesis claim against
+        the financial facts and identify potential weaknesses, contradictions,
+        or over-optimistic conclusions.
+        """
+        if not self._llm_provider:
+            return []
+        
+        # Build facts context
+        facts_context = "\n".join([
+            f"- {key}: {value}" for key, value in facts_dict.items()
+            if value is not None and not isinstance(value, (dict, list))
+        ][:30])  # Limit to 30 facts
+        
+        # Build prompt for the reasoning model
+        system_prompt = f"""You are a Short-Seller Critic analyzing financial hypotheses.
+Your role is to find weaknesses, contradictions, and over-optimistic claims.
+
+Posture: {self.posture.upper()}
+- lenient: Only attack clear issues with strong evidence
+- balanced: Moderate skepticism, attack when evidence supports
+- strict: Aggressive, challenge all assumptions
+
+For each valid attack, output a JSON object with these fields:
+- contradiction_type: one of "data_inconsistency", "missing_evidence", "logical_flaw", "over_optimism"
+- severity: one of "LOW", "MEDIUM", "HIGH", "CRITICAL"
+- claim: Your attack claim explaining the issue (max 100 chars)
+- confidence: Float between 0.0 and 1.0
+
+Output ONLY valid JSON array. No explanations outside JSON.
+Example: [{{"contradiction_type": "data_inconsistency", "severity": "HIGH", "claim": "D/E ratio of 1.8x contradicts claim of low leverage", "confidence": 0.85}}]
+If no valid attacks, output: []"""
+
+        user_prompt = f"""Analyze this hypothesis for weaknesses:
+
+HYPOTHESIS: {hypothesis.claim}
+Hypothesis Confidence: {hypothesis.confidence}
+Author: {hypothesis.agent_id}
+
+FINANCIAL FACTS:
+{facts_context}
+
+Find contradictions, missing evidence, logical flaws, or over-optimism.
+Output JSON array of attacks (max {posture_config['max_attacks_per_hypothesis']} attacks)."""
+
+        try:
+            # Use Mistral provider with reasoning model
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt),
+            ]
+            
+            response = self._llm_provider.complete(
+                messages=messages,
+                model=DEBATE_MODEL,
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            
+            if not response.success:
+                logger.warning(f"LLM attack generation failed: {response.error_message}")
+                return []
+            
+            # Parse the response into Attack objects
+            attacks = self._parse_llm_attacks(response.content, hypothesis, all_facts)
+            return attacks
+            
+        except Exception as e:
+            logger.warning(f"LLM attack generation failed: {e}")
+            return []
+    
+    def _parse_llm_attacks(
+        self,
+        response_content: str,
+        hypothesis: Hypothesis,
+        all_facts: List[Fact],
+    ) -> List[Attack]:
+        """Parse LLM response into Attack objects."""
+        attacks = []
+        
+        try:
+            # Handle thinking/reasoning model output that includes text before JSON
+            content = response_content.strip()
+            
+            # Try to extract JSON from code blocks first
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                parts = content.split("```")
+                # Look for the part that looks like JSON
+                for part in parts[1::2]:  # Odd indices are code block contents
+                    if part.strip().startswith("[") or part.strip().startswith("{"):
+                        content = part.strip()
+                        break
+            
+            # Try to find JSON array in the content (magistral often outputs thinking before JSON)
+            # Look for array pattern containing the expected keys
+            json_match = re.search(r'\[\s*\{[^}]*"contradiction_type"[^]]*\]', content, re.DOTALL)
+            if json_match:
+                content = json_match.group()
+            else:
+                # Fallback: try to find any JSON array
+                json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group()
+            
+            # If content still doesn't start with [ or {, try to find JSON
+            if not content.startswith("[") and not content.startswith("{"):
+                # Last attempt: find from first [ to last ]
+                start_idx = content.find("[")
+                end_idx = content.rfind("]")
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    content = content[start_idx:end_idx + 1]
+            
+            attack_data = json.loads(content)
+            
+            if not isinstance(attack_data, list):
+                attack_data = [attack_data]
+            
+            severity_map = {
+                "LOW": Severity.LOW,
+                "MEDIUM": Severity.MEDIUM,
+                "HIGH": Severity.HIGH,
+                "CRITICAL": Severity.CRITICAL,
+            }
+            
+            for item in attack_data:
+                if not isinstance(item, dict):
+                    continue
+                
+                severity_str = item.get("severity", "MEDIUM").upper()
+                severity = severity_map.get(severity_str, Severity.MEDIUM)
+                
+                attack = Attack(
+                    critic_id=self.agent_id,
+                    target_hypothesis_id=hypothesis.hypothesis_id,
+                    contradiction_type=item.get("contradiction_type", "logical_flaw"),
+                    severity=severity,
+                    claim=item.get("claim", "LLM-generated attack")[:200],
+                    evidence_refs=[],
+                    counter_facts=[f.fact_id for f in all_facts[:3]],
+                    confidence=min(1.0, max(0.0, float(item.get("confidence", 0.7)))),
+                )
+                attacks.append(attack)
+            
+            logger.info(f"[LLM] Parsed {len(attacks)} attacks from response")
+            return attacks
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse LLM attack response: {e}")
+            # Log more context for debugging
+            if response_content:
+                logger.debug(f"Raw response length: {len(response_content)}")
+                # Try to show where JSON might be
+                if "[" in response_content:
+                    idx = response_content.find("[")
+                    logger.debug(f"JSON might start at char {idx}: ...{response_content[max(0,idx-20):idx+100]}...")
+            return []

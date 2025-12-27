@@ -114,6 +114,50 @@ def set_default_provider(provider: LLMProvider) -> None:
     logger.info(f"Set default LLM provider to: {provider.provider_type.value}")
 
 
+# Separate provider for debate agents (uses secondary API key)
+_debate_provider: Optional[LLMProvider] = None
+
+
+def get_debate_provider() -> LLMProvider:
+    """
+    Get the debate LLM provider (uses secondary API key for parallel calls).
+    
+    This allows debate agents (critic, mediator) to run in parallel with
+    analyst agents without hitting API rate limits.
+    
+    Uses MISTRAL_API_KEY_2 if available, otherwise falls back to MISTRAL_API_KEY.
+    """
+    global _debate_provider
+    
+    if _debate_provider is None:
+        provider = os.getenv("LLM_PROVIDER", "mistral")
+        model = os.getenv("DEBATE_LLM_MODEL", "magistral-medium-latest")  # Default to reasoning model
+        temperature = float(os.getenv("LLM_TEMPERATURE", "0.3"))  # Lower temp for reasoning
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+        
+        # Use secondary API key for parallel calls
+        api_key = os.getenv("MISTRAL_API_KEY_2") or os.getenv("MISTRAL_API_KEY")
+        
+        if not api_key:
+            logger.warning("No MISTRAL_API_KEY_2 or MISTRAL_API_KEY found for debate provider")
+            # Fall back to default provider
+            return get_default_provider()
+        
+        config = LLMConfig(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        
+        _debate_provider = create_llm_provider(config)
+        key_used = "MISTRAL_API_KEY_2" if os.getenv("MISTRAL_API_KEY_2") else "MISTRAL_API_KEY"
+        logger.info(f"Created debate LLM provider: {_debate_provider.provider_type.value} (using {key_used})")
+    
+    return _debate_provider
+
+
 def reset_default_provider() -> None:
     """Reset the default provider (useful for testing)."""
     global _default_provider
