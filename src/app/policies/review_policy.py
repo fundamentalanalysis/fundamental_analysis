@@ -149,10 +149,15 @@ class ManualReviewPolicy:
         if not benchmark_facts:
             return "No benchmark data available"
         
+        # Check for fallback benchmarks (exclude LLM-generated ones as they're customized)
         fallback_facts = [
             f for f in benchmark_facts 
-            if f.metadata.get("is_fallback", False)
+            if f.metadata.get("is_fallback", False) 
+            and not f.metadata.get("is_llm_generated", False)
         ]
+        
+        if not fallback_facts:
+            return None  # No fallback or using LLM-generated = OK
         
         fallback_rate = len(fallback_facts) / len(benchmark_facts)
         if fallback_rate > self.missing_benchmark:

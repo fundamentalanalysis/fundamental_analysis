@@ -9,6 +9,7 @@ Benchmarking Agent retrieves/loads industry medians and builds threshold profile
 Key responsibilities:
 - Load industry-specific benchmarks
 - Build threshold profiles for evaluation
+- Use LLM to generate dynamic thresholds for unknown industries
 - Apply fallback logic for missing benchmarks
 """
 
@@ -17,10 +18,14 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import time
 import logging
+import json
+import re
 
 from .base_agent import BaseMeshAgent, AgentOutput
 from src.app.blackboard.models import Hypothesis, Fact
 from src.app.blackboard.store import Blackboard
+from src.app.llm.factory import get_default_provider
+from src.app.llm.provider import Message
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,7 @@ class ThresholdProfile(BaseModel):
     # Fallback flags
     is_fallback: bool = False
     fallback_reason: Optional[str] = None
+    is_llm_generated: bool = False
 
 
 # Default industry benchmarks
@@ -108,18 +114,33 @@ class BenchmarkingAgent(BaseMeshAgent):
     
     Key features:
     - Industry-specific benchmarks
+    - LLM-powered dynamic threshold generation for unknown industries
     - Fallback logic for missing data
     - Dynamic threshold adjustment
     """
     
     agent_id = "benchmarking_agent"
     agent_name = "Benchmarking Agent"
-    description = "Retrieves industry medians and builds threshold profiles"
+    description = "Retrieves industry medians and builds threshold profiles using LLM for unknown industries"
     hypothesis_budget = 3
+    use_llm = True
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.benchmarks = DEFAULT_BENCHMARKS.copy()
+        
+        if config and "use_llm" in config:
+            self.use_llm = config["use_llm"]
+        
+        # Initialize LLM provider for dynamic benchmark generation
+        self._llm_provider = None
+        if self.use_llm:
+            try:
+                self._llm_provider = get_default_provider()
+                logger.info(f"[Benchmarking] Using LLM provider: {self._llm_provider.provider_type.value}")
+            except Exception as e:
+                logger.warning(f"[Benchmarking] Failed to initialize LLM provider: {e}")
+                self._llm_provider = None
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Get benchmark profile and write relevant facts."""
@@ -190,24 +211,139 @@ class BenchmarkingAgent(BaseMeshAgent):
         Applies fallback logic:
         1. Exact match
         2. Sector proxy (if defined)
-        3. Default conservative thresholds
+        3. LLM-generated thresholds (if LLM available)
+        4. Default conservative thresholds
         """
         # Normalize code
         code = industry_code.lower().replace(" ", "_").replace("-", "_")
         
-        # Exact match
+        # Exact match (but skip if it's the fallback default)
         if code in self.benchmarks:
-            return self.benchmarks[code]
+            profile = self.benchmarks[code]
+            # For default with LLM available, try to generate better thresholds
+            if code == "default" and self._llm_provider and not profile.is_llm_generated:
+                logger.info("[Benchmarking] Generating LLM thresholds for general/cross-industry analysis")
+                llm_profile = self._generate_llm_thresholds("cross-industry/general")
+                if llm_profile:
+                    return llm_profile
+            return profile
         
         # Try partial match
         for key, profile in self.benchmarks.items():
-            if key in code or code in key:
+            if key != "default" and (key in code or code in key):
                 logger.info(f"Using partial match '{key}' for industry '{industry_code}'")
                 return profile
+        
+        # Try LLM-generated thresholds for unknown industry
+        if self._llm_provider:
+            logger.info(f"[Benchmarking] Generating LLM thresholds for industry: {industry_code}")
+            llm_profile = self._generate_llm_thresholds(industry_code)
+            if llm_profile:
+                # Cache the generated profile
+                self.benchmarks[code] = llm_profile
+                return llm_profile
         
         # Fallback to default
         logger.warning(f"No benchmark found for '{industry_code}', using default")
         return self.benchmarks["default"]
+    
+    def _generate_llm_thresholds(self, industry_code: str) -> Optional[ThresholdProfile]:
+        """
+        Use LLM to generate industry-appropriate threshold values.
+        
+        Returns:
+            ThresholdProfile with LLM-generated thresholds, or None if generation fails
+        """
+        if not self._llm_provider:
+            return None
+        
+        system_prompt = """You are a financial analyst expert. Generate appropriate financial ratio thresholds for company analysis based on the given industry.
+
+Consider industry-specific characteristics:
+- Capital-intensive industries typically have higher acceptable D/E ratios
+- Asset-light/tech industries should have lower leverage thresholds
+- Financial services have naturally high leverage (regulated differently)
+- Growth industries may have lower profitability expectations but higher growth
+
+Output ONLY valid JSON with these fields:
+{
+  "industry_name": "Human readable industry name",
+  "de_ratio_ok": 1.0,  // D/E ratio below this is healthy
+  "de_ratio_warning": 1.5,  // D/E ratio above this is concerning
+  "debt_ebitda_ok": 3.0,  // Debt/EBITDA below this is healthy
+  "debt_ebitda_warning": 4.0,  // Debt/EBITDA above this is concerning
+  "interest_coverage_ok": 3.0,  // Interest coverage above this is healthy
+  "interest_coverage_warning": 1.5,  // Interest coverage below this is concerning
+  "roe_good": 0.15,  // ROE above this is good (as decimal)
+  "roe_acceptable": 0.10,  // ROE above this is acceptable (as decimal)
+  "current_ratio_safe": 1.5,  // Current ratio above this is safe
+  "current_ratio_warning": 1.0,  // Current ratio below this is warning
+  "qoe_good": 1.0,  // Quality of earnings (CFO/NI) above this is good
+  "qoe_warning": 0.5  // Quality of earnings below this is warning
+}"""
+
+        user_prompt = f"""Generate appropriate financial ratio thresholds for the industry: "{industry_code}"
+
+Consider what makes sense for this specific industry. Be precise with the values based on industry norms.
+Output JSON only."""
+
+        try:
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt),
+            ]
+            
+            response = self._llm_provider.complete(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=500,
+            )
+            
+            if not response.success:
+                logger.warning(f"[Benchmarking] LLM threshold generation failed: {response.error_message}")
+                return None
+            
+            # Track LLM usage
+            self._llm_calls += 1
+            self._llm_tokens += response.usage.get("total_tokens", 0)
+            
+            # Parse JSON response
+            content = response.content.strip()
+            
+            # Extract JSON
+            json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group()
+            
+            thresholds = json.loads(content)
+            
+            profile = ThresholdProfile(
+                industry_code=industry_code.lower().replace(" ", "_"),
+                industry_name=thresholds.get("industry_name", industry_code.replace("_", " ").title()),
+                de_ratio_ok=float(thresholds.get("de_ratio_ok", 1.0)),
+                de_ratio_warning=float(thresholds.get("de_ratio_warning", 1.5)),
+                debt_ebitda_ok=float(thresholds.get("debt_ebitda_ok", 3.0)),
+                debt_ebitda_warning=float(thresholds.get("debt_ebitda_warning", 4.0)),
+                interest_coverage_ok=float(thresholds.get("interest_coverage_ok", 3.0)),
+                interest_coverage_warning=float(thresholds.get("interest_coverage_warning", 1.5)),
+                roe_good=float(thresholds.get("roe_good", 0.15)),
+                roe_acceptable=float(thresholds.get("roe_acceptable", 0.10)),
+                current_ratio_safe=float(thresholds.get("current_ratio_safe", 1.5)),
+                current_ratio_warning=float(thresholds.get("current_ratio_warning", 1.0)),
+                qoe_good=float(thresholds.get("qoe_good", 1.0)),
+                qoe_warning=float(thresholds.get("qoe_warning", 0.5)),
+                is_llm_generated=True,
+            )
+            
+            logger.info(f"[Benchmarking] LLM generated thresholds for {industry_code}: D/E OK={profile.de_ratio_ok}, ROE good={profile.roe_good}")
+            return profile
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"[Benchmarking] Failed to parse LLM threshold response: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"[Benchmarking] LLM threshold generation error: {e}")
+            return None
     
     def _create_benchmark_facts(self, profile: ThresholdProfile) -> List[Fact]:
         """Create facts from threshold profile."""
@@ -231,6 +367,7 @@ class BenchmarkingAgent(BaseMeshAgent):
                 metadata={
                     "industry_code": profile.industry_code,
                     "is_fallback": profile.is_fallback,
+                    "is_llm_generated": profile.is_llm_generated,
                 },
             ))
         
