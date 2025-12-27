@@ -236,6 +236,8 @@ class Blackboard:
         Write an attack to the blackboard.
         
         Attacks can only be written by critic agents.
+        Note: Attacks do NOT change hypothesis status - that's the mediator's job.
+        Hypotheses remain ACTIVE even after being attacked so the debate can continue.
         """
         self._check_write_permission(EntryType.ATTACK, critic_id)
         
@@ -245,12 +247,9 @@ class Blackboard:
                 f"Target hypothesis {attack.target_hypothesis_id} does not exist"
             )
         
-        # Update target hypothesis status
-        target = self._hypotheses[attack.target_hypothesis_id]
-        self._hypotheses[attack.target_hypothesis_id] = target.model_copy(update={
-            "status": HypothesisStatus.ATTACKED,
-            "updated_at": datetime.utcnow(),
-        })
+        # Note: We do NOT change hypothesis status here anymore
+        # The mediator will determine if an attack is successful and update status
+        # This allows hypotheses to accumulate multiple attacks and defenses
         
         attack = attack.model_copy(update={"critic_id": critic_id})
         self._attacks[attack.attack_id] = attack
@@ -268,15 +267,23 @@ class Blackboard:
         Write a resolution to the blackboard.
         
         Resolutions can only be written by the mediator.
+        Note: Resolved hypotheses are marked as DEFENDED (not RESOLVED) so they
+        remain visible in the debate. Only in the final round do we fully resolve.
         """
         self._check_write_permission(EntryType.RESOLUTION, mediator_id)
         
-        # Update resolved hypotheses
+        # Determine if this is likely the final round (high convergence)
+        is_final_round = resolution.convergence_score >= 0.8
+        
+        # Update resolved hypotheses - mark as DEFENDED to keep in debate
+        # Only mark as RESOLVED on high convergence (end of debate)
+        new_status = HypothesisStatus.RESOLVED if is_final_round else HypothesisStatus.DEFENDED
+        
         for hyp_id in resolution.resolved_hypotheses:
             if hyp_id in self._hypotheses:
                 hyp = self._hypotheses[hyp_id]
                 self._hypotheses[hyp_id] = hyp.model_copy(update={
-                    "status": HypothesisStatus.RESOLVED,
+                    "status": new_status,
                     "updated_at": datetime.utcnow(),
                 })
         

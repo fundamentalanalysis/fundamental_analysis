@@ -26,6 +26,25 @@ from src.app.schemas import (
 )
 from src.app.agents import GenericAgent, AnalysisWorkflow, create_workflow
 
+from dotenv import load_dotenv
+load_dotenv()
+
+# -------------------------------------------
+# LOGGING CONFIGURATION
+# -------------------------------------------
+import logging
+
+# Configure logging to show INFO level and above
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+
+# Set specific loggers to INFO level
+logging.getLogger("src.app.mesh").setLevel(logging.INFO)
+logging.getLogger("src.app.llm").setLevel(logging.INFO)
+logging.getLogger("src.app.engines").setLevel(logging.INFO)
 
 # ---------------------------------------------------------
 # FASTAPI APP WITH LIFESPAN
@@ -67,6 +86,15 @@ async def lifespan(app: FastAPI):
         
     except Exception as e:
         print(f"⚠️ Could not save workflow graph: {e}")
+    
+    # Save mesh workflow diagram
+    try:
+        from src.app.mesh.orchestrator import MeshOrchestrator
+        mesh_orchestrator = MeshOrchestrator()
+        mesh_files = mesh_orchestrator.save_workflow_diagram(graph_dir)
+        print(f"✅ Mesh workflow diagrams saved: {list(mesh_files.keys())}")
+    except Exception as e:
+        print(f"⚠️ Could not save mesh workflow diagram: {e}")
     
     yield
     # Cleanup on shutdown (if needed)
@@ -854,6 +882,7 @@ def get_mesh_workflow():
         orchestrator = MeshOrchestrator()
         return {
             "workflow_diagram": orchestrator.get_workflow_diagram(),
+            "mermaid_diagram": orchestrator.get_mermaid_diagram(),
             "agents": [
                 {"id": "debt_analyst", "name": "Debt Analyst", "type": "analyst"},
                 {"id": "liquidity_analyst", "name": "Liquidity Analyst", "type": "analyst"},
@@ -882,11 +911,31 @@ def get_mesh_workflow():
         return {"error": str(e)}
 
 
+@app.post("/mesh/workflow/save")
+def save_mesh_workflow():
+    """Save the mesh workflow diagram to files."""
+    try:
+        import os
+        from src.app.mesh.orchestrator import MeshOrchestrator
+        
+        orchestrator = MeshOrchestrator()
+        graph_dir = os.path.join(ROOT, "graphs")
+        saved_files = orchestrator.save_workflow_diagram(graph_dir)
+        
+        return {
+            "success": True,
+            "saved_files": saved_files,
+            "message": f"Mesh workflow diagrams saved to {graph_dir}"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/mesh/llm/status")
 def get_llm_status():
     """Check LLM provider status and configuration."""
     try:
-        from src.app.llm import get_available_providers, LLMConfig, create_llm_provider
+        from src.app.llm.factory import get_available_providers, LLMConfig, create_llm_provider
         import os
         
         available = get_available_providers()

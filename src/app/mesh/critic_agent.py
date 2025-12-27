@@ -76,10 +76,12 @@ class ShortSellerCriticAgent(BaseMeshAgent):
         facts_used = []
         
         try:
-            # Get all active hypotheses to attack
+            # Get all debatable hypotheses (ACTIVE and DEFENDED)
             active_hypotheses = blackboard.get_hypotheses(status=HypothesisStatus.ACTIVE)
+            defended_hypotheses = blackboard.get_hypotheses(status=HypothesisStatus.DEFENDED)
+            all_debatable = active_hypotheses + defended_hypotheses
             
-            if not active_hypotheses:
+            if not all_debatable:
                 logger.info("No active hypotheses to attack")
                 return AgentOutput(
                     agent_id=self.agent_id,
@@ -98,7 +100,7 @@ class ShortSellerCriticAgent(BaseMeshAgent):
             attacks = []
             posture_config = self.POSTURE_CONFIG[self.posture]
             
-            for hypothesis in active_hypotheses:
+            for hypothesis in all_debatable:
                 hypothesis_attacks = self.attack_hypothesis(
                     hypothesis, facts_dict, all_facts, posture_config
                 )

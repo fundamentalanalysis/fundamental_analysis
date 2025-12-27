@@ -368,6 +368,90 @@ REASONING: [Brief explanation of your reasoning, 1-2 sentences]
         
         return None
     
+    def generate_llm_synthesis(
+        self,
+        facts_summary: str,
+        analysis_focus: str,
+        existing_hypotheses: Optional[List[Hypothesis]] = None,
+    ) -> Optional[Hypothesis]:
+        """
+        Generate an LLM-synthesized hypothesis based on facts.
+        
+        This method can be called by any agent to get LLM-enhanced insights.
+        
+        Args:
+            facts_summary: Summary of key facts to analyze
+            analysis_focus: What aspect to focus on (e.g., "debt sustainability")
+            existing_hypotheses: Optional list of existing hypotheses for context
+            
+        Returns:
+            A synthesized Hypothesis or None if LLM is disabled/failed
+        """
+        if not self.use_llm:
+            return None
+        
+        # Build context from existing hypotheses
+        context = ""
+        if existing_hypotheses:
+            claims = [h.claim[:100] for h in existing_hypotheses[:3]]
+            context = f"\nExisting findings:\n" + "\n".join(f"- {c}" for c in claims)
+        
+        prompt = f"""As a {self.description}, analyze the following metrics and provide ONE key insight.
+
+Focus Area: {analysis_focus}
+
+Key Metrics:
+{facts_summary}
+{context}
+
+Provide your response in this EXACT format:
+CLAIM: [One specific, actionable insight]
+CONFIDENCE: [0.0-1.0 as a number]
+REASONING: [1-2 sentences explaining your logic]"""
+
+        response = self.call_llm(prompt, max_tokens=300)
+        
+        if not response:
+            return None
+        
+        return self._parse_llm_synthesis_response(response)
+    
+    def _parse_llm_synthesis_response(self, response: str) -> Optional[Hypothesis]:
+        """Parse LLM synthesis response into a hypothesis."""
+        try:
+            claim = ""
+            confidence = 0.65
+            reasoning = ""
+            
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if line.upper().startswith("CLAIM:"):
+                    claim = line[6:].strip()
+                elif line.upper().startswith("CONFIDENCE:"):
+                    try:
+                        conf_str = line[11:].strip()
+                        if "%" in conf_str:
+                            confidence = float(conf_str.replace("%", "")) / 100
+                        else:
+                            confidence = float(conf_str)
+                        confidence = max(0.0, min(1.0, confidence))
+                    except ValueError:
+                        confidence = 0.65
+                elif line.upper().startswith("REASONING:"):
+                    reasoning = line[10:].strip()
+            
+            if claim:
+                return self.generate_hypothesis(
+                    claim=claim,
+                    confidence=confidence,
+                    linked_facts=[],
+                    reasoning=f"[LLM] {reasoning}" if reasoning else "[LLM-generated]",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM synthesis: {e}")
+        
+        return None
+    
     def assess_confidence(
         self,
         base_confidence: float,

@@ -61,15 +61,18 @@ class MediatorAgent(BaseMeshAgent):
         try:
             current_round = blackboard.get_debate_round() + 1
             
-            # Get active hypotheses and attacks
+            # Get all debatable hypotheses (ACTIVE and DEFENDED can be debated)
             active_hypotheses = blackboard.get_hypotheses(status=HypothesisStatus.ACTIVE)
-            attacked_hypotheses = blackboard.get_hypotheses(status=HypothesisStatus.ATTACKED)
+            defended_hypotheses = blackboard.get_hypotheses(status=HypothesisStatus.DEFENDED)
             all_attacks = blackboard.get_attacks()
+            
+            # Combine for debate - both active and defended hypotheses participate
+            debatable = active_hypotheses + defended_hypotheses
             
             # Run resolution logic
             resolution = self.run_debate_round(
                 round_number=current_round,
-                hypotheses=active_hypotheses + attacked_hypotheses,
+                hypotheses=debatable,
                 attacks=all_attacks,
             )
             

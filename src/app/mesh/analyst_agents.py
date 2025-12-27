@@ -274,6 +274,11 @@ class LiquidityAnalystAgent(BaseMeshAgent):
     description = "Analyst focused on short-term solvency and cash adequacy"
     hypothesis_budget = 5
     
+    # System prompt for LLM
+    system_prompt = """You are a liquidity analyst focused on short-term solvency.
+Analyze the company's cash position, working capital adequacy, and ability to meet
+near-term obligations. Identify any liquidity stress signals or strengths."""
+    
     KEY_FACTS = [
         "current_ratio", "quick_ratio", "cash_ratio",
         "defensive_interval_ratio_days", "ocf_to_current_liabilities",
@@ -347,6 +352,18 @@ class LiquidityAnalystAgent(BaseMeshAgent):
                 if hyp:
                     hypotheses.append(hyp)
             
+            # LLM-enhanced synthesis (if enabled)
+            if self.use_llm and len(hypotheses) < self.hypothesis_budget:
+                facts_summary = self._build_facts_summary(facts_dict)
+                if facts_summary:
+                    llm_hyp = self.generate_llm_synthesis(
+                        facts_summary=facts_summary,
+                        analysis_focus="liquidity and short-term solvency",
+                        existing_hypotheses=hypotheses,
+                    )
+                    if llm_hyp:
+                        hypotheses.append(llm_hyp)
+            
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)
             
@@ -356,6 +373,8 @@ class LiquidityAnalystAgent(BaseMeshAgent):
                 facts_used=facts_used,
                 execution_time_ms=execution_time,
                 success=True,
+                llm_calls=self._llm_calls,
+                llm_tokens_used=self._llm_tokens,
             )
             
         except Exception as e:
@@ -368,6 +387,21 @@ class LiquidityAnalystAgent(BaseMeshAgent):
                 success=False,
                 error_message=str(e),
             )
+    
+    def _build_facts_summary(self, facts_dict: Dict[str, Any]) -> str:
+        """Build a summary of key facts for LLM analysis."""
+        parts = []
+        if cr := facts_dict.get("current_ratio"):
+            parts.append(f"Current ratio: {cr:.2f}x")
+        if qr := facts_dict.get("quick_ratio"):
+            parts.append(f"Quick ratio: {qr:.2f}x")
+        if cash := facts_dict.get("cash_ratio"):
+            parts.append(f"Cash ratio: {cash:.2f}x")
+        if dir_d := facts_dict.get("defensive_interval_ratio_days"):
+            parts.append(f"Defensive interval: {dir_d:.0f} days")
+        if ocf := facts_dict.get("ocf_to_current_liabilities"):
+            parts.append(f"OCF/Current Liabilities: {ocf:.2f}x")
+        return "\n".join(f"- {p}" for p in parts) if parts else ""
 
 
 class AssetQualityAnalystAgent(BaseMeshAgent):
@@ -381,6 +415,11 @@ class AssetQualityAnalystAgent(BaseMeshAgent):
     agent_name = "Asset Quality Analyst"
     description = "Analyst focused on asset quality and intangible-heavy balance sheets"
     hypothesis_budget = 5
+    
+    # System prompt for LLM
+    system_prompt = """You are an asset quality analyst focused on balance sheet quality.
+Analyze asset turnover, intangibles concentration, goodwill impairment risk,
+and capital work in progress. Identify any hidden asset quality issues."""
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Execute asset quality analysis."""
@@ -446,6 +485,24 @@ class AssetQualityAnalystAgent(BaseMeshAgent):
                 if hyp:
                     hypotheses.append(hyp)
             
+            # LLM-enhanced synthesis
+            if self.use_llm and len(hypotheses) < self.hypothesis_budget:
+                parts = []
+                if at := facts_dict.get("asset_turnover"):
+                    parts.append(f"Asset turnover: {at:.2f}x")
+                if intang := facts_dict.get("intangible_pct_total_assets"):
+                    parts.append(f"Intangibles: {intang:.0%} of assets")
+                if cwip := facts_dict.get("cwip_pct"):
+                    parts.append(f"CWIP: {cwip:.0%} of fixed assets")
+                if parts:
+                    llm_hyp = self.generate_llm_synthesis(
+                        facts_summary="\n".join(f"- {p}" for p in parts),
+                        analysis_focus="asset quality and balance sheet risks",
+                        existing_hypotheses=hypotheses,
+                    )
+                    if llm_hyp:
+                        hypotheses.append(llm_hyp)
+            
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)
             
@@ -480,6 +537,11 @@ class QoEAnalystAgent(BaseMeshAgent):
     agent_name = "Quality of Earnings Analyst"
     description = "Forensic accounting analyst evaluating earnings quality"
     hypothesis_budget = 5
+    
+    # System prompt for LLM
+    system_prompt = """You are a forensic accounting analyst focused on earnings quality.
+Analyze accrual patterns, cash conversion, revenue recognition practices, and
+non-operating income dependence. Identify any accounting red flags."""
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Execute quality of earnings analysis."""
@@ -550,6 +612,24 @@ class QoEAnalystAgent(BaseMeshAgent):
                 if hyp:
                     hypotheses.append(hyp)
             
+            # LLM-enhanced synthesis
+            if self.use_llm and len(hypotheses) < self.hypothesis_budget:
+                parts = []
+                if qoe := facts_dict.get("qoe"):
+                    parts.append(f"QoE ratio: {qoe:.2f}x")
+                if dso := facts_dict.get("dso"):
+                    parts.append(f"DSO: {dso:.0f} days")
+                if oir := facts_dict.get("other_income_ratio"):
+                    parts.append(f"Other income ratio: {oir:.0%}")
+                if parts:
+                    llm_hyp = self.generate_llm_synthesis(
+                        facts_summary="\n".join(f"- {p}" for p in parts),
+                        analysis_focus="earnings quality and accounting practices",
+                        existing_hypotheses=hypotheses,
+                    )
+                    if llm_hyp:
+                        hypotheses.append(llm_hyp)
+            
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)
             
@@ -584,6 +664,11 @@ class WorkingCapitalAnalystAgent(BaseMeshAgent):
     agent_name = "Working Capital Analyst"
     description = "Analyst focused on working capital efficiency and cash cycle"
     hypothesis_budget = 4
+    
+    # System prompt for LLM
+    system_prompt = """You are a working capital analyst focused on operational efficiency.
+Analyze cash conversion cycle components, inventory management, receivables collection,
+and supplier payment practices. Identify working capital optimization opportunities."""
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Execute working capital analysis."""
@@ -642,6 +727,26 @@ class WorkingCapitalAnalystAgent(BaseMeshAgent):
                 if hyp:
                     hypotheses.append(hyp)
             
+            # LLM-enhanced synthesis
+            if self.use_llm and len(hypotheses) < self.hypothesis_budget:
+                parts = []
+                if ccc := facts_dict.get("ccc"):
+                    parts.append(f"Cash conversion cycle: {ccc:.0f} days")
+                if dio := facts_dict.get("dio"):
+                    parts.append(f"Days inventory outstanding: {dio:.0f} days")
+                if dso := facts_dict.get("dso"):
+                    parts.append(f"Days sales outstanding: {dso:.0f} days")
+                if dpo := facts_dict.get("dpo"):
+                    parts.append(f"Days payables outstanding: {dpo:.0f} days")
+                if parts:
+                    llm_hyp = self.generate_llm_synthesis(
+                        facts_summary="\n".join(f"- {p}" for p in parts),
+                        analysis_focus="working capital efficiency and cash cycle",
+                        existing_hypotheses=hypotheses,
+                    )
+                    if llm_hyp:
+                        hypotheses.append(llm_hyp)
+            
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)
             
@@ -676,6 +781,11 @@ class EquityAnalystAgent(BaseMeshAgent):
     agent_name = "Equity Analyst"
     description = "Senior equity analyst evaluating shareholder value creation"
     hypothesis_budget = 5
+    
+    # System prompt for LLM
+    system_prompt = """You are a senior equity analyst focused on shareholder value.
+Analyze ROE, dividend sustainability, capital allocation, and equity dilution.
+Identify whether the company is creating or destroying shareholder value."""
     
     def execute(self, blackboard: Blackboard) -> AgentOutput:
         """Execute equity and funding mix analysis."""
@@ -746,6 +856,24 @@ class EquityAnalystAgent(BaseMeshAgent):
                 )
                 if hyp:
                     hypotheses.append(hyp)
+            
+            # LLM-enhanced synthesis
+            if self.use_llm and len(hypotheses) < self.hypothesis_budget:
+                parts = []
+                if roe := facts_dict.get("roe"):
+                    parts.append(f"ROE: {roe:.1%}")
+                if payout := facts_dict.get("dividend_payout_ratio"):
+                    parts.append(f"Dividend payout ratio: {payout:.0%}")
+                if dilution := facts_dict.get("equity_dilution_pct"):
+                    parts.append(f"Equity dilution: {dilution:.0%}")
+                if parts:
+                    llm_hyp = self.generate_llm_synthesis(
+                        facts_summary="\n".join(f"- {p}" for p in parts),
+                        analysis_focus="shareholder value creation and equity returns",
+                        existing_hypotheses=hypotheses,
+                    )
+                    if llm_hyp:
+                        hypotheses.append(llm_hyp)
             
             execution_time = (time.time() - start_time) * 1000
             self.log_execution(True, len(hypotheses), execution_time)

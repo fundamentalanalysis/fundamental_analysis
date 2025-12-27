@@ -187,14 +187,11 @@ class MeshOrchestrator:
         Returns:
             FinalDecision with score, thesis, and audit trail
         """
-        if LANGGRAPH_AVAILABLE and self.graph:
-            return self._run_with_langgraph(
-                company, current_data, historical_data, year, industry_code
-            )
-        else:
-            return self._run_sequential(
-                company, current_data, historical_data, year, industry_code
-            )
+        # Always use sequential execution because Blackboard is not serializable
+        # and LangGraph's checkpointer requires msgpack-serializable state
+        return self._run_sequential(
+            company, current_data, historical_data, year, industry_code
+        )
     
     async def arun(
         self,
@@ -224,6 +221,10 @@ class MeshOrchestrator:
         """Run workflow without LangGraph (sequential execution)."""
         start_time = time.time()
         execution_times = {}
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"MESH ANALYSIS STARTED: {company} ({year})")
+        logger.info(f"{'='*60}")
         
         # Initialize blackboard
         blackboard = Blackboard()
@@ -262,23 +263,44 @@ class MeshOrchestrator:
         
         # Stage 5: Analyst Hypotheses
         stage_start = time.time()
+        total_llm_calls = 0
+        total_llm_tokens = 0
+        logger.info(f"\n--- Stage 5: Analyst Agents ---")
         for agent in self.analyst_agents:
             output = agent.execute(blackboard)
             for hyp in output.hypotheses:
                 blackboard.write_hypothesis(hyp, agent.agent_id)
+            # Track LLM usage
+            if hasattr(agent, '_llm_calls'):
+                total_llm_calls += agent._llm_calls
+                total_llm_tokens += agent._llm_tokens
+            logger.info(f"  {agent.agent_id}: {len(output.hypotheses)} hypotheses (LLM: {getattr(agent, '_llm_calls', 0)} calls)")
         execution_times["analysts"] = time.time() - stage_start
-        logger.info(f"Stage 5 (Analysts) complete: {blackboard.get_active_hypothesis_count()} hypotheses")
+        logger.info(f"Stage 5 complete: {blackboard.get_active_hypothesis_count()} hypotheses, {total_llm_calls} LLM calls, {total_llm_tokens} tokens")
         
         # Stage 6: Adversarial Debate Loop
         stage_start = time.time()
+        logger.info(f"\n--- Stage 6: Adversarial Debate ---")
         self.debate_policy.start_debate()
+        debate_round = 0
         
         while True:
+            debate_round += 1
+            logger.info(f"\n  [Round {debate_round}]")
+            
             # Critic attacks
             critic_output = self.critic_agent.execute(blackboard)
+            attacks_count = len(blackboard.get_attacks()) if hasattr(blackboard, 'get_attacks') else 0
+            logger.info(f"    Critic: generated attacks (total: {attacks_count})")
+            if hasattr(self.critic_agent, '_llm_calls'):
+                logger.info(f"    Critic LLM: {self.critic_agent._llm_calls} calls, {self.critic_agent._llm_tokens} tokens")
             
             # Mediator resolves
             mediator_output = self.mediator_agent.execute(blackboard)
+            resolutions_count = len(blackboard.get_resolutions()) if hasattr(blackboard, 'get_resolutions') else 0
+            logger.info(f"    Mediator: proposed resolutions (total: {resolutions_count})")
+            if hasattr(self.mediator_agent, '_llm_calls'):
+                logger.info(f"    Mediator LLM: {self.mediator_agent._llm_calls} calls, {self.mediator_agent._llm_tokens} tokens")
             
             # Check termination
             metrics = DebateMetrics(
@@ -288,22 +310,31 @@ class MeshOrchestrator:
                 hypotheses_active=blackboard.get_active_hypothesis_count(),
             )
             
+            logger.info(f"    Convergence: {metrics.convergence_score:.2f}, Active hypotheses: {metrics.hypotheses_active}")
+            
             if self.debate_policy.should_terminate(metrics):
                 reason = self.debate_policy.get_termination_reason(metrics)
-                logger.info(f"Debate terminated: {reason}")
+                logger.info(f"  Debate terminated after {debate_round} rounds: {reason}")
                 break
         
         execution_times["debate"] = time.time() - stage_start
         
         # Stage 7: Correlation Overrides
         stage_start = time.time()
+        logger.info(f"\n--- Stage 7: Correlation Engine ---")
         overrides = self.correlation_engine.apply_overrides(blackboard)
+        for ovr in overrides:
+            desc = ovr.description[:60] if ovr.description else ovr.rule_name
+            logger.info(f"  Override: {ovr.rule_id} ({ovr.action}) - {desc}...")
         execution_times["correlation"] = time.time() - stage_start
-        logger.info(f"Stage 7 (Correlation) complete: {len(overrides)} overrides")
+        logger.info(f"Stage 7 complete: {len(overrides)} overrides applied")
         
         # Stage 8: Judge Synthesis
         stage_start = time.time()
+        logger.info(f"\n--- Stage 8: Judge Synthesis ---")
         self.judge_agent.execute(blackboard)
+        if hasattr(self.judge_agent, '_llm_calls'):
+            logger.info(f"  Judge LLM: {self.judge_agent._llm_calls} calls, {self.judge_agent._llm_tokens} tokens")
         execution_times["judge"] = time.time() - stage_start
         
         final_decision = blackboard.get_final()
@@ -560,3 +591,124 @@ Level-5 Agentic Mesh Workflow
     │ (Final Output)  │
     └─────────────────┘
 """
+    
+    def get_mermaid_diagram(self) -> str:
+        """Get a Mermaid diagram representation of the mesh workflow."""
+        return """```mermaid
+flowchart TD
+    subgraph "Layer A: Deterministic Truth Surface"
+        DQ[🔍 Data Quality Engine]
+        ME[📊 Metric Engine]
+        TE[📈 Trend Engine]
+        CE[🔗 Correlation Engine]
+    end
+    
+    subgraph "Layer B: Blackboard"
+        BB[(📋 Blackboard<br/>Facts, Hypotheses, Attacks)]
+    end
+    
+    subgraph "Layer C: Agentic Mesh"
+        BM[🏭 Benchmarking Agent]
+        
+        subgraph "Analyst Agents"
+            DA[💰 Debt Analyst]
+            LA[💧 Liquidity Analyst]
+            AQ[🏢 Asset Quality]
+            QE[📝 QoE Analyst]
+            WC[🔄 Working Capital]
+            EA[📈 Equity Analyst]
+        end
+        
+        CR[🐻 Short-Seller Critic]
+        MD[⚖️ Mediator]
+        JD[👨‍⚖️ Judge]
+    end
+    
+    subgraph "Layer D: Orchestration"
+        OR[🎯 Mesh Orchestrator]
+        DP[📜 Debate Policy]
+        CP[🤝 Consensus Policy]
+        RP[👁️ Review Policy]
+    end
+    
+    %% Flow
+    DQ --> BB
+    ME --> BB
+    TE --> BB
+    
+    BB --> BM
+    BB --> DA & LA & AQ & QE & WC & EA
+    
+    DA & LA & AQ & QE & WC & EA --> BB
+    
+    BB --> CR
+    CR --> BB
+    
+    BB --> MD
+    MD --> BB
+    
+    MD -->|continue| CR
+    MD -->|converged| CE
+    
+    CE --> BB
+    BB --> JD
+    JD --> |Final Decision| Output[📊 Score + Thesis]
+    
+    OR -.->|controls| DP & CP & RP
+    DP & CP & RP -.->|policies| MD
+    
+    style BB fill:#f9f,stroke:#333,stroke-width:2px
+    style JD fill:#ff9,stroke:#333,stroke-width:2px
+    style Output fill:#9f9,stroke:#333,stroke-width:2px
+```"""
+    
+    def save_workflow_diagram(self, output_dir: str = "graphs") -> Dict[str, str]:
+        """
+        Save the mesh workflow diagram as PNG and Mermaid markdown.
+        
+        Args:
+            output_dir: Directory to save diagrams (default: graphs/)
+            
+        Returns:
+            Dict with paths to saved files
+        """
+        import os
+        
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        saved_files = {}
+        
+        # Save Mermaid markdown
+        mermaid_path = os.path.join(output_dir, "mesh_workflow.md")
+        with open(mermaid_path, "w", encoding="utf-8") as f:
+            f.write("# Level-5 Agentic Mesh Workflow\n\n")
+            f.write(self.get_mermaid_diagram())
+            f.write("\n\n## Stages\n\n")
+            f.write("1. **Data Quality**: Assess input data quality\n")
+            f.write("2. **Metrics**: Compute financial ratios and metrics\n")
+            f.write("3. **Trends**: Calculate CAGR, YoY growth, patterns\n")
+            f.write("4. **Benchmarking**: Compare against industry thresholds\n")
+            f.write("5. **Analyst Hypotheses**: 6 specialist analysts generate claims\n")
+            f.write("6. **Adversarial Debate**: Critic attacks, Mediator resolves\n")
+            f.write("7. **Correlation Overrides**: Cross-module kill-switches\n")
+            f.write("8. **Judge Synthesis**: Final score, thesis, and audit trail\n")
+        saved_files["mermaid"] = mermaid_path
+        logger.info(f"✅ Mesh workflow mermaid saved to: {mermaid_path}")
+        
+        # Try to save PNG using LangGraph's built-in visualization
+        if LANGGRAPH_AVAILABLE and self.graph:
+            try:
+                png_path = os.path.join(output_dir, "mesh_workflow.png")
+                # Compile the graph first
+                app = self.graph.compile()
+                # Get the graph image
+                png_data = app.get_graph().draw_mermaid_png()
+                with open(png_path, "wb") as f:
+                    f.write(png_data)
+                saved_files["png"] = png_path
+                logger.info(f"✅ Mesh workflow PNG saved to: {png_path}")
+            except Exception as e:
+                logger.warning(f"Could not save PNG diagram: {e}")
+        
+        return saved_files
