@@ -1020,19 +1020,14 @@ Keep the analysis concise but insightful.
         if include_rules:
             for r in rules_results:
                 if r.flag == "RED":
+                    # Format red_flags with severity/title/detail structure
                     red_flags.append({
-                        "rule_id": r.rule_id,
-                        "rule_name": r.rule_name,
-                        "metric": r.metric,
-                        "year": r.year,
-                        "flag": r.flag,
-                        "value": r.value,
-                        "threshold": r.threshold,
-                        "reason": r.reason,
-                        "implication": r.implication,
-                        "risk_level": r.risk_level
+                        "severity": "CRITICAL",
+                        "title": r.rule_name,
+                        "detail": r.reason
                     })
-            positive_points = [r.reason for r in rules_results if r.flag == "GREEN"]
+            # Format positive_points with rule_name prefix
+            positive_points = [f"{r.rule_name}: {r.reason}" for r in rules_results if r.flag == "GREEN"]
         
         # 10. Generate LLM narrative if requested (and rules enabled)
         narrative = None
