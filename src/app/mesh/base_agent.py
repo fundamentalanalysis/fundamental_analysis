@@ -26,19 +26,33 @@ logger = logging.getLogger(__name__)
 
 # LLM provider singleton (initialized lazily)
 _llm_provider = None
-
+_provider_index = 0  # For round-robin across pool
 
 def get_llm_provider():
-    """Get the default LLM provider (lazy initialization)."""
-    global _llm_provider
-    if _llm_provider is None:
-        try:
-            from src.app.llm import get_default_provider
+    """Get an LLM provider from the pool (round-robin for parallelism)."""
+    global _llm_provider, _provider_index
+    
+    try:
+        from src.app.llm.factory import get_pool_provider, get_pool_size
+        
+        # If pool is available and has multiple providers, use round-robin
+        pool_size = get_pool_size()
+        if pool_size > 1:
+            provider = get_pool_provider(_provider_index)
+            _provider_index = (_provider_index + 1) % pool_size
+            return provider
+        elif pool_size == 1:
+            return get_pool_provider(0)
+        
+        # Fallback to default provider
+        from src.app.llm import get_default_provider
+        if _llm_provider is None:
             _llm_provider = get_default_provider()
-        except Exception as e:
-            logger.warning(f"Failed to initialize LLM provider: {e}")
-            return None
-    return _llm_provider
+        return _llm_provider
+        
+    except Exception as e:
+        logger.warning(f"Failed to get LLM provider: {e}")
+        return None
 
 
 def set_llm_provider(provider):

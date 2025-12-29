@@ -453,14 +453,32 @@ Analyze and determine resolution. Output JSON only."""
             # Extract JSON from response
             content = response_content.strip()
             if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
+                content = content.split("```json")[-1].split("```")[0].strip()
             elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
+                parts = content.split("```")
+                for part in parts[1::2]:
+                    if part.strip().startswith("{") or part.strip().startswith("["):
+                        content = part.strip()
+                        break
             
-            # Try to find JSON object in the content
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                content = json_match.group()
+            # For reasoning models, find the JSON object with balanced braces
+            json_found = False
+            start_idx = content.find("{")
+            if start_idx != -1:
+                brace_count = 0
+                for i, char in enumerate(content[start_idx:], start_idx):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            content = content[start_idx:i+1]
+                            json_found = True
+                            break
+            
+            if not json_found or not content.strip().startswith("{"):
+                logger.debug(f"No valid JSON found in mediator response")
+                return [], [], [], ""
             
             data = json.loads(content)
             

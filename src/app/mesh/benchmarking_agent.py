@@ -310,10 +310,24 @@ Output JSON only."""
             # Parse JSON response
             content = response.content.strip()
             
-            # Extract JSON
-            json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-            if json_match:
-                content = json_match.group()
+            # Remove markdown code fences if present
+            if "```json" in content:
+                content = content.split("```json")[-1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            # Extract JSON object (handle nested braces)
+            brace_count = 0
+            start_idx = content.find('{')
+            if start_idx != -1:
+                for i, char in enumerate(content[start_idx:], start_idx):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            content = content[start_idx:i+1]
+                            break
             
             thresholds = json.loads(content)
             

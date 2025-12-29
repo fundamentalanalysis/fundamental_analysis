@@ -185,3 +185,117 @@ def get_available_providers() -> Dict[str, bool]:
     available["ollama"] = False
     
     return available
+
+
+# =============================================================================
+# Concurrent LLM Pool Management
+# =============================================================================
+import asyncio
+from typing import List
+import threading
+
+# Pool of providers for concurrent use
+_provider_pool: List[LLMProvider] = []
+_pool_semaphore: Optional[asyncio.Semaphore] = None
+_pool_lock = threading.Lock()
+_pool_initialized = False
+
+
+def init_concurrent_pool(max_concurrent: int = 2) -> None:
+    """
+    Initialize a pool of LLM providers for concurrent use.
+    
+    Uses both MISTRAL_API_KEY and MISTRAL_API_KEY_2 for parallelism.
+    Max concurrent is capped by the number of available API keys.
+    """
+    global _provider_pool, _pool_semaphore, _pool_initialized
+    
+    with _pool_lock:
+        if _pool_initialized:
+            return
+        
+        _provider_pool = []
+        
+        # Collect available API keys
+        api_keys = []
+        key1 = os.getenv("MISTRAL_API_KEY")
+        key2 = os.getenv("MISTRAL_API_KEY_2")
+        
+        # Log which keys are found
+        logger.info(f"Checking API keys: MISTRAL_API_KEY={'found' if key1 else 'NOT FOUND'}, MISTRAL_API_KEY_2={'found' if key2 else 'NOT FOUND'}")
+        
+        if key1:
+            api_keys.append(("MISTRAL_API_KEY", key1))
+        if key2:
+            api_keys.append(("MISTRAL_API_KEY_2", key2))
+        
+        if not api_keys:
+            logger.warning("No Mistral API keys found for concurrent pool")
+            return
+        
+        logger.info(f"Found {len(api_keys)} API keys for concurrent pool")
+        
+        # Create one provider per API key
+        provider_name = os.getenv("LLM_PROVIDER", "mistral")
+        model = os.getenv("LLM_MODEL", "mistral-large-latest")
+        
+        for key_name, api_key in api_keys:
+            config = LLMConfig(
+                provider=provider_name,
+                model=model,
+                api_key=api_key,
+                temperature=0.7,
+                max_tokens=1000,
+            )
+            
+            try:
+                provider = create_llm_provider(config)
+                _provider_pool.append(provider)
+                logger.info(f"Added provider to pool using {key_name}")
+            except Exception as e:
+                logger.warning(f"Failed to create provider with {key_name}: {e}")
+        
+        # Semaphore limits concurrent calls to min(max_concurrent, num_providers)
+        actual_concurrent = min(max_concurrent, len(_provider_pool))
+        _pool_semaphore = asyncio.Semaphore(actual_concurrent)
+        _pool_initialized = True
+        
+        logger.info(f"Initialized concurrent LLM pool with {len(_provider_pool)} providers, max {actual_concurrent} concurrent")
+
+
+def get_pool_provider(index: int = 0) -> Optional[LLMProvider]:
+    """Get a provider from the pool by index (round-robin style)."""
+    if not _provider_pool:
+        init_concurrent_pool()
+    
+    if not _provider_pool:
+        return get_default_provider()  # Fallback
+    
+    return _provider_pool[index % len(_provider_pool)]
+
+
+async def acquire_pool_slot() -> int:
+    """Acquire a slot in the concurrent pool. Returns provider index."""
+    global _pool_semaphore
+    
+    if not _pool_initialized:
+        init_concurrent_pool()
+    
+    if _pool_semaphore:
+        await _pool_semaphore.acquire()
+    
+    # Return index for round-robin selection
+    return hash(asyncio.current_task()) % max(1, len(_provider_pool))
+
+
+def release_pool_slot() -> None:
+    """Release a slot back to the concurrent pool."""
+    if _pool_semaphore:
+        _pool_semaphore.release()
+
+
+def get_pool_size() -> int:
+    """Get the number of providers in the pool."""
+    if not _pool_initialized:
+        init_concurrent_pool()
+    return len(_provider_pool)

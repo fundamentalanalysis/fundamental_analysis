@@ -261,20 +261,38 @@ class MeshOrchestrator:
         self.benchmarking_agent.execute(blackboard)
         execution_times["benchmarking"] = time.time() - stage_start
         
-        # Stage 5: Analyst Hypotheses
+        # Stage 5: Analyst Hypotheses (run concurrently with max 2 parallel due to API key limits)
         stage_start = time.time()
         total_llm_calls = 0
         total_llm_tokens = 0
-        logger.info(f"\n--- Stage 5: Analyst Agents ---")
-        for agent in self.analyst_agents:
-            output = agent.execute(blackboard)
-            for hyp in output.hypotheses:
-                blackboard.write_hypothesis(hyp, agent.agent_id)
-            # Track LLM usage
-            if hasattr(agent, '_llm_calls'):
-                total_llm_calls += agent._llm_calls
-                total_llm_tokens += agent._llm_tokens
-            logger.info(f"  {agent.agent_id}: {len(output.hypotheses)} hypotheses (LLM: {getattr(agent, '_llm_calls', 0)} calls)")
+        logger.info(f"\n--- Stage 5: Analyst Agents (concurrent, max 2) ---")
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        def execute_analyst(agent):
+            """Execute a single analyst agent."""
+            try:
+                output = agent.execute(blackboard)
+                return agent, output
+            except Exception as e:
+                logger.error(f"Error executing {agent.agent_id}: {e}")
+                return agent, None
+        
+        # Use max 2 workers (one per API key)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {executor.submit(execute_analyst, agent): agent for agent in self.analyst_agents}
+            
+            for future in as_completed(futures):
+                agent, output = future.result()
+                if output:
+                    for hyp in output.hypotheses:
+                        blackboard.write_hypothesis(hyp, agent.agent_id)
+                    # Track LLM usage
+                    if hasattr(agent, '_llm_calls'):
+                        total_llm_calls += agent._llm_calls
+                        total_llm_tokens += agent._llm_tokens
+                    logger.info(f"  {agent.agent_id}: {len(output.hypotheses)} hypotheses (LLM: {getattr(agent, '_llm_calls', 0)} calls)")
+        
         execution_times["analysts"] = time.time() - stage_start
         logger.info(f"Stage 5 complete: {blackboard.get_active_hypothesis_count()} hypotheses, {total_llm_calls} LLM calls, {total_llm_tokens} tokens")
         

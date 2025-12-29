@@ -445,7 +445,7 @@ Output JSON array of attacks (max {posture_config['max_attacks_per_hypothesis']}
             
             # Try to extract JSON from code blocks first
             if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
+                content = content.split("```json")[-1].split("```")[0].strip()
             elif "```" in content:
                 parts = content.split("```")
                 # Look for the part that looks like JSON
@@ -454,24 +454,49 @@ Output JSON array of attacks (max {posture_config['max_attacks_per_hypothesis']}
                         content = part.strip()
                         break
             
-            # Try to find JSON array in the content (magistral often outputs thinking before JSON)
-            # Look for array pattern containing the expected keys
+            # For reasoning models that output thinking before JSON,
+            # find the actual JSON array or object
+            json_found = False
+            
+            # Method 1: Look for JSON array with expected keys
             json_match = re.search(r'\[\s*\{[^}]*"contradiction_type"[^]]*\]', content, re.DOTALL)
             if json_match:
                 content = json_match.group()
-            else:
-                # Fallback: try to find any JSON array
-                json_match = re.search(r'\[.*\]', content, re.DOTALL)
-                if json_match:
-                    content = json_match.group()
+                json_found = True
             
-            # If content still doesn't start with [ or {, try to find JSON
-            if not content.startswith("[") and not content.startswith("{"):
-                # Last attempt: find from first [ to last ]
+            if not json_found:
+                # Method 2: Find balanced brackets from first [ to matching ]
                 start_idx = content.find("[")
-                end_idx = content.rfind("]")
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    content = content[start_idx:end_idx + 1]
+                if start_idx != -1:
+                    bracket_count = 0
+                    for i, char in enumerate(content[start_idx:], start_idx):
+                        if char == '[':
+                            bracket_count += 1
+                        elif char == ']':
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                content = content[start_idx:i+1]
+                                json_found = True
+                                break
+            
+            if not json_found:
+                # Method 3: Find balanced braces for single object
+                start_idx = content.find("{")
+                if start_idx != -1:
+                    brace_count = 0
+                    for i, char in enumerate(content[start_idx:], start_idx):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                content = content[start_idx:i+1]
+                                json_found = True
+                                break
+            
+            if not json_found or (not content.strip().startswith("[") and not content.strip().startswith("{")):
+                logger.debug(f"No valid JSON found in response of length {len(response_content)}")
+                return []
             
             attack_data = json.loads(content)
             
