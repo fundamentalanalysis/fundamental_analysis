@@ -719,26 +719,13 @@ def analyze_flat(req: AnalyzeRequest):
         metrics_data = {}  # Only for current year
         trends_data = {}   # For all years
         
-        # Define module prefixes
-        MODULE_PREFIXES = {
-            "borrowings": "b_",
-            "liquidity": "l_",
-            "quality_of_earnings": "qoe_",
-            "asset_intangible_quality": "aiqm_",
-            "working_capital": "wc_",
-            "capex_cwip": "capex_",
-            "equity_funding_mix": "efm_",
-            "risk_scenario_detection": "risk_",
-            "leverage_financial_risk": "lfr_",
-        }
-        
         def add_to_trends(actual_year, field_name, value):
             """Add a field to a specific year's trends"""
             if actual_year not in trends_data:
                 trends_data[actual_year] = {}
             trends_data[actual_year][field_name] = value
         
-        def extract_year_values(data_dict, prefix, metric_path, base_year):
+        def extract_year_values(data_dict, metric_path, base_year):
             """
             Recursively extract year-based values (Y, Y-1, etc.) from any structure.
             Works for both simple and nested trend structures.
@@ -752,7 +739,7 @@ def analyze_flat(req: AnalyzeRequest):
                     if year_label in data_dict and data_dict[year_label] is not None:
                         year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
                         actual_year = str(base_year - year_offset)
-                        add_to_trends(actual_year, f"{prefix}{metric_path}", data_dict[year_label])
+                        add_to_trends(actual_year, metric_path, data_dict[year_label])
                 return
             
             # Check if this dict has a "values" key
@@ -766,17 +753,17 @@ def analyze_flat(req: AnalyzeRequest):
                         if year_label in values and values[year_label] is not None:
                             year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
                             actual_year = str(base_year - year_offset)
-                            add_to_trends(actual_year, f"{prefix}{metric_path}", values[year_label])
+                            add_to_trends(actual_year, metric_path, values[year_label])
                             
                             # Add YoY growth if available
                             yoy_key = "Y_vs_Y-1" if year_label == "Y" else f"Y-{year_offset}_vs_Y-{year_offset + 1}"
                             if yoy_key in yoy_growth:
-                                add_to_trends(actual_year, f"{prefix}{metric_path}_yoy", yoy_growth[yoy_key])
+                                add_to_trends(actual_year, f"{metric_path}_yoy", yoy_growth[yoy_key])
                 else:
                     # Nested structure inside values - recurse into each
                     for nested_key, nested_val in values.items():
                         new_path = f"{metric_path}_{nested_key}" if metric_path else nested_key
-                        extract_year_values(nested_val, prefix, new_path, base_year)
+                        extract_year_values(nested_val, new_path, base_year)
                 return
             
             # Otherwise, recurse into nested dicts (skip insight, comparison, status)
@@ -785,30 +772,32 @@ def analyze_flat(req: AnalyzeRequest):
                     continue
                 if isinstance(value, dict):
                     new_path = f"{metric_path}_{key}" if metric_path else key
-                    extract_year_values(value, prefix, new_path, base_year)
+                    extract_year_values(value, new_path, base_year)
         
         # Extract trend values for each year from all modules
         for module_id, module_data in module_results.items():
             trends = module_data.get("trends", {})
             key_metrics = module_data.get("key_metrics", {})
             
-            prefix = MODULE_PREFIXES.get(module_id, f"{module_id}_")
-            
-            # Process each trend - goes into trends_data
+            # Process each trend - goes into trends_data (no prefix)
             for metric_name, metric_data in trends.items():
                 if isinstance(metric_data, dict):
-                    extract_year_values(metric_data, prefix, metric_name, year)
+                    extract_year_values(metric_data, metric_name, year)
             
-            # Add current year key_metrics to metrics_data
+            # Add current year key_metrics to metrics_data (no prefix)
+            # Skip if already exists in trends for the current year
             current_year_str = str(year)
             if current_year_str not in metrics_data:
                 metrics_data[current_year_str] = {}
             
+            trends_for_current_year = trends_data.get(current_year_str, {})
+            
             for metric_name, value in key_metrics.items():
                 if metric_name == "year":
                     continue
-                field_name = f"{prefix}{metric_name}"
-                metrics_data[current_year_str][field_name] = value
+                # Only add to metrics if not already in trends
+                if metric_name not in trends_for_current_year:
+                    metrics_data[current_year_str][metric_name] = value
 
         return {
             "company": company,
