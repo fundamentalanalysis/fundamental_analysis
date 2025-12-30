@@ -737,8 +737,10 @@ def analyze_flat(req: AnalyzeRequest):
                                   "equity_cagr", "debt_cagr", "retained_cagr", "roe_cagr"],
             "risk_scenario_detection": ["interest_coverage_cash", "interest_coverage_ebit", 
                                        "net_debt", "cash_flow_deficit"],
-            "leverage_financial_risk": [],  # No specific metrics needed
-            "working_capital": [],  # Not in user's list
+            "leverage_financial_risk": ["total_debt", "short_term_debt", "cash", "equity", "ebit", "ebitda",
+                                        "interest_cost", "taxes", "net_debt", "ffo", "de_ratio", "debt_ebitda",
+                                        "net_debt_ebitda", "interest_coverage", "st_debt_ratio", "ffo_coverage"],
+            "working_capital": ["dso", "dio", "dpo", "ccc", "cogs", "nwc_ratio", "revenue", "nwc"],
         }
         
         ALLOWED_TRENDS = {
@@ -754,8 +756,9 @@ def analyze_flat(req: AnalyzeRequest):
                                   "equity_growth_rate", "debt_growth_rate"],
             "risk_scenario_detection": ["zombie_company", "window_dressing", "asset_stripping",
                                        "loan_evergreening", "circular_trading"],
-            "leverage_financial_risk": [],  # Not in user's list
-            "working_capital": [],  # Not in user's list
+            "leverage_financial_risk": ["basic leverage metrics", "advanced fitch / s&p style metrics", 
+                                        "short-term debt dependence"],
+            "working_capital": ["trade_receivables", "inventory", "trade_payables", "revenue"],
         }
         
         # Build flattened per-year structure - separate metrics and trends
@@ -833,15 +836,19 @@ def analyze_flat(req: AnalyzeRequest):
                 if metric_name in allowed_trends and isinstance(metric_data, dict):
                     extract_year_values(metric_data, metric_name, year, allowed_trends)
             
-            # Add current year allowed key_metrics
+            # Add current year allowed key_metrics (skip if already in trends)
             current_year_str = str(year)
             if current_year_str not in metrics_data:
                 metrics_data[current_year_str] = {}
             
+            # Get trends for current year to avoid duplicates
+            trends_for_current_year = trends_data.get(current_year_str, {})
+            
             for metric_name, value in key_metrics.items():
                 if metric_name == "year":
                     continue
-                if metric_name in allowed_metrics:
+                # Only add if in allowed list AND not already in trends
+                if metric_name in allowed_metrics and metric_name not in trends_for_current_year:
                     metrics_data[current_year_str][metric_name] = value
 
         return {
