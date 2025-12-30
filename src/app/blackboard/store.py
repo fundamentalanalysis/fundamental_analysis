@@ -58,7 +58,7 @@ WRITE_ACL: Dict[EntryType, List[str]] = {
     EntryType.ATTACK: [
         "short_seller_critic",
         "critic",
-    ],
+    ],  
     EntryType.RESOLUTION: [
         "mediator",
     ],

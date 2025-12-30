@@ -120,8 +120,8 @@ def run_module_node(module_id: str):
                     if rule.reason:
                         key_insights.append(f"[{module_id.upper()}] ✓ {rule.reason}")
 
-            # Store minimal module results when rules are disabled
-            stored_result = result.model_dump() if include_rules else result.to_metrics_trends_dict()
+            # Always store minimal module results (module, company, year, key_metrics, trends)
+            stored_result = result.to_metrics_trends_dict()
             
             return {
                 "module_results": {**state.get("module_results", {}), module_id: stored_result},
@@ -262,7 +262,8 @@ class AnalysisWorkflow:
         """Initialize the workflow"""
         self.config = config or WorkflowConfig()
         self.agents_config = load_agents_config()
-        self.available_modules = list(self.agents_config.get("modules", {}).keys())
+        # self.available_modules = list(self.agents_config.get("modules", {}).keys())
+        self.available_modules = ["borrowings", "quality_of_earnings", "liquidity", "asset_intangible_quality"]
         self.graph = None
         self.checkpointer = MemorySaver() if self.config.enable_checkpoints else None
         

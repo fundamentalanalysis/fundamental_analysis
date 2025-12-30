@@ -609,10 +609,17 @@ def analyze(req: AnalyzeRequest):
         # Calculate YoY growth for all metrics
         yoy_growth = calculate_yoy_growth(fds)
 
-        modules = ['borrowings', 'liquidity', 'working_capital',
-                'quality_of_earnings', 'asset_intangible_quality',
-                 'capex_cwip', 'equity_funding_mix' ,'risk_scenario_detection',
-                 'leverage_financial_risk'] if req.modules is None else req.modules
+        modules = [
+            'borrowings', 
+        'liquidity', 
+        # 'working_capital',
+                'quality_of_earnings',
+                 'asset_intangible_quality',
+                #  'capex_cwip',
+                #   'equity_funding_mix' ,
+                #   'risk_scenario_detection',
+                #  'leverage_financial_risk'
+                 ] if req.modules is None else req.modules
         
         output_mode = (req.output_mode or "full").lower().strip()
         metrics_trends_only = output_mode == "metrics_trends"
@@ -657,6 +664,113 @@ def analyze(req: AnalyzeRequest):
             "traceback": traceback.format_exc()
         }, status_code=500)
 
+
+@app.post("/analyze/flat")
+def analyze_flat(req: AnalyzeRequest):
+    """
+    Return flattened JSON response per year combining fields from all modules.
+    
+    Output format:
+    {
+        "company": "BBOX",
+        "years": {
+            "2025": { "revenue": ..., "current_ratio": ..., ... },
+            "2024": { "revenue": ..., "current_ratio": ..., ... },
+            ...
+        }
+    }
+    """
+    try:
+        company = req.company.upper()
+        fds = req.financial_data.financial_years
+        
+        sorted_fds = sorted(fds, key=lambda x: x.year, reverse=True)
+        current_data = financial_year_to_dict(sorted_fds[0])
+        historical_data = prepare_historical_data(fds)
+        year = req.year if req.year else sorted_fds[0].year
+
+        modules = [
+            'borrowings', 
+            'liquidity', 
+            'quality_of_earnings',
+            'asset_intangible_quality',
+        ] if req.modules is None else req.modules
+
+        # Run workflow with minimal output
+        result = workflow.run(
+            company=company,
+            current_data=current_data,
+            historical_data=historical_data,
+            modules=modules,
+            generate_narrative=False,
+            include_rules=False,
+            year=year
+        )
+
+        module_results = result.get("module_results", {})
+        
+        # Build flattened per-year structure
+        years_data = {}
+        
+        # Extract trend values for each year from all modules
+        for module_id, module_data in module_results.items():
+            trends = module_data.get("trends", {})
+            key_metrics = module_data.get("key_metrics", {})
+            
+            # Add prefix based on module
+            prefix = ""
+            if module_id == "borrowings":
+                prefix = "b_"
+            elif module_id == "liquidity":
+                prefix = "l_"
+            elif module_id == "quality_of_earnings":
+                prefix = "qoe_"
+            elif module_id == "asset_intangible_quality":
+                prefix = "aiqm_"
+            elif module_id == "working_capital":
+                prefix = "wc_"
+            elif module_id == "capex_cwip":
+                prefix = "capex_"
+            elif module_id == "equity_funding_mix":
+                prefix = "efm_"
+            
+            # Process trends to extract per-year values
+            for metric_name, metric_data in trends.items():
+                if isinstance(metric_data, dict) and "values" in metric_data:
+                    values = metric_data["values"]
+                    # Map Y, Y-1, Y-2, etc. to actual years
+                    year_offset = 0
+                    for year_label in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]:
+                        if year_label in values:
+                            actual_year = str(year - year_offset)
+                            if actual_year not in years_data:
+                                years_data[actual_year] = {}
+                            
+                            field_name = f"{prefix}{metric_name}"
+                            years_data[actual_year][field_name] = values[year_label]
+                        year_offset += 1
+            
+            # Add current year key_metrics
+            current_year_str = str(year)
+            if current_year_str not in years_data:
+                years_data[current_year_str] = {}
+            
+            for metric_name, value in key_metrics.items():
+                if metric_name != "year":  # Skip year field
+                    field_name = f"{prefix}{metric_name}"
+                    years_data[current_year_str][field_name] = value
+
+        return {
+            "company": company,
+            "years": years_data
+        }
+        
+    except Exception as e:
+        import traceback
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status_code=500)
 
 @app.post("/analyze/stream")
 async def analyze_stream(req: AnalyzeRequest):

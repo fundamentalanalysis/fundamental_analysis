@@ -99,7 +99,6 @@ class ModuleOutput(BaseModel):
         return {
             "module": self.module,
             "company": self.company,
-            "year": self.year,
             "key_metrics": self.key_metrics,
             "trends": self.trends,
         }

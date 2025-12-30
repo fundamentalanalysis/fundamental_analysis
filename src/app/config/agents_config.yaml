@@ -683,31 +683,27 @@ modules:
     computed_fields:
       net_block: ["fixed_assets", "gross_block - accumulated_depreciation"]
     metrics:
-      gross_block: "gross_block"
-      accumulated_depreciation: "accumulated_depreciation"
-      net_block: "net_block"
+      # Only the fields requested in key_metrics output
       revenue: "revenue"
-      cwip: "cwip"
-      intangible_assets: "intangible_assets"
-      total_assets: "total_assets"
+      intangibles: "intangible_assets"
       asset_turnover: "safe_div(revenue, net_block)"
       asset_age_proxy: "safe_div(accumulated_depreciation, gross_block)"
-      intangible_pct_total_assets: "safe_div(intangible_assets, total_assets)"
-      intangible_amortization_proxy: "(depreciation or 0) * (safe_div(intangible_assets, (gross_block + intangible_assets)) or 0)"
-      amortization_ratio_proxy: "safe_div(intangible_amortization_proxy, intangible_assets)"
+      intangible_pct_total: "safe_div(intangible_assets, total_assets)"
+      intangible_growth: "safe_div((intangible_assets - (prev.get('intangible_assets') or 0)), (prev.get('intangible_assets') or 0))"
+      amortization_ratio: "safe_div((depreciation or 0) * (safe_div(intangible_assets, (gross_block + intangible_assets)) or 0), intangible_assets)"
+      r_and_d_ratio: "safe_div((intangible_assets or 0) - (prev.get('intangible_assets') or 0), intangible_assets)"
 
     detailed_trend_fields:
       asset_turnover: "Asset Turnover"
       asset_age_proxy: "Asset Age Proxy"
       intangible_assets: "Intangible Assets"
-      intangible_pct_total_assets: "Intangibles % of Total Assets"
       cwip: "CWIP"
       revenue: "Revenue"
 
-    # Special trend blocks to match the provided AIQM trend engine
+    # Special trend blocks for capitalization analysis
     detailed_special_trends: [aiqm_capitalization, aiqm_cwip_vs_capitalization]
 
-    # CAGR signals (computed into key_metrics)
+    # CAGR signals (output as nested 'cagr' object in trends)
     trend_metrics:
       cagr_fields:
         - intangible_assets
@@ -817,23 +813,24 @@ modules:
         - "revenue * ((manufacturing_cost or 0) + (material_cost or 0)) / 100"
         - "(revenue or 0) - (operating_profit or 0)"
     metrics:
-      trade_receivables: "trade_receivables"
-      inventory: "inventory"
-      trade_payables: "trade_payables"
+      # trade_receivables: "trade_receivables"
+      # inventory: "inventory"
+      # trade_payables: "trade_payables"
       revenue: "revenue"
       cogs: "cogs"
       dso: "safe_div(trade_receivables, revenue) * 365"
       dio: "safe_div(inventory, cogs) * 365"
       dpo: "safe_div(trade_payables, cogs) * 365"
-      ccc: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
-      cash_conversion_cycle: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
+      # ccc: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
+      # cash_conversion_cycle: "(safe_div(trade_receivables, revenue) * 365) + (safe_div(inventory, cogs) * 365) - (safe_div(trade_payables, cogs) * 365)"
+      cash_conversion_cycle: "dso + dio - dpo"
       nwc: "(trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)"
       nwc_ratio: "safe_div(((trade_receivables or 0) + (inventory or 0) - (trade_payables or 0)), revenue)"
 
     detailed_trend_fields:
-      trade_receivables: "Trade Receivables"
-      inventory: "Inventory"
-      trade_payables: "Trade Payables"
+      # trade_receivables: "Trade Receivables"
+      # inventory: "Inventory"
+      # trade_payables: "Trade Payables"
       revenue: "Revenue"
       dso: "DSO"
       dio: "DIO"
