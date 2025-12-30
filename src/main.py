@@ -612,13 +612,13 @@ def analyze(req: AnalyzeRequest):
         modules = [
             'borrowings', 
         'liquidity', 
-        # 'working_capital',
+        'working_capital',
                 'quality_of_earnings',
                  'asset_intangible_quality',
-                #  'capex_cwip',
-                #   'equity_funding_mix' ,
-                #   'risk_scenario_detection',
-                #  'leverage_financial_risk'
+                 'capex_cwip',
+                  'equity_funding_mix' ,
+                  'risk_scenario_detection',
+                 'leverage_financial_risk'
                  ] if req.modules is None else req.modules
         
         output_mode = (req.output_mode or "full").lower().strip()
@@ -690,10 +690,16 @@ def analyze_flat(req: AnalyzeRequest):
         year = req.year if req.year else sorted_fds[0].year
 
         modules = [
-            'borrowings', 
-            'liquidity', 
-            'quality_of_earnings',
-            'asset_intangible_quality',
+          'borrowings', 
+        'liquidity', 
+        'working_capital',
+                'quality_of_earnings',
+                 'asset_intangible_quality',
+                 'capex_cwip',
+                  'equity_funding_mix' ,
+                  'risk_scenario_detection',
+                 'leverage_financial_risk'
+            
         ] if req.modules is None else req.modules
 
         # Run workflow with minimal output
@@ -712,52 +718,96 @@ def analyze_flat(req: AnalyzeRequest):
         # Build flattened per-year structure
         years_data = {}
         
+        # Define module prefixes
+        MODULE_PREFIXES = {
+            "borrowings": "b_",
+            "liquidity": "l_",
+            "quality_of_earnings": "qoe_",
+            "asset_intangible_quality": "aiqm_",
+            "working_capital": "wc_",
+            "capex_cwip": "capex_",
+            "equity_funding_mix": "efm_",
+            "risk_scenario_detection": "risk_",
+            "leverage_financial_risk": "lfr_",
+        }
+        
+        def add_to_year(actual_year, field_name, value):
+            """Add a field to a specific year's data"""
+            if actual_year not in years_data:
+                years_data[actual_year] = {}
+            years_data[actual_year][field_name] = value
+        
+        def extract_year_values(data_dict, prefix, metric_path, base_year):
+            """
+            Recursively extract year-based values (Y, Y-1, etc.) from any structure.
+            Works for both simple and nested trend structures.
+            """
+            if not isinstance(data_dict, dict):
+                return
+            
+            # Check if this dict directly contains Y, Y-1 keys (it IS the values dict)
+            if any(k in data_dict for k in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]):
+                for year_label in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]:
+                    if year_label in data_dict and data_dict[year_label] is not None:
+                        year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
+                        actual_year = str(base_year - year_offset)
+                        add_to_year(actual_year, f"{prefix}{metric_path}", data_dict[year_label])
+                return
+            
+            # Check if this dict has a "values" key
+            if "values" in data_dict and isinstance(data_dict["values"], dict):
+                values = data_dict["values"]
+                yoy_growth = data_dict.get("yoy_growth_pct", {})
+                
+                # Check if values has year-based keys
+                if any(k in values for k in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]):
+                    for year_label in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]:
+                        if year_label in values and values[year_label] is not None:
+                            year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
+                            actual_year = str(base_year - year_offset)
+                            add_to_year(actual_year, f"{prefix}{metric_path}", values[year_label])
+                            
+                            # Add YoY growth if available
+                            yoy_key = "Y_vs_Y-1" if year_label == "Y" else f"Y-{year_offset}_vs_Y-{year_offset + 1}"
+                            if yoy_key in yoy_growth:
+                                add_to_year(actual_year, f"{prefix}{metric_path}_yoy", yoy_growth[yoy_key])
+                else:
+                    # Nested structure inside values - recurse into each
+                    for nested_key, nested_val in values.items():
+                        new_path = f"{metric_path}_{nested_key}" if metric_path else nested_key
+                        extract_year_values(nested_val, prefix, new_path, base_year)
+                return
+            
+            # Otherwise, recurse into nested dicts (skip insight, comparison, status)
+            for key, value in data_dict.items():
+                if key in ["insight", "comparison", "status", "rule_triggered", "years_below", "flagged_years", "overlap_years"]:
+                    continue
+                if isinstance(value, dict):
+                    new_path = f"{metric_path}_{key}" if metric_path else key
+                    extract_year_values(value, prefix, new_path, base_year)
+        
         # Extract trend values for each year from all modules
         for module_id, module_data in module_results.items():
             trends = module_data.get("trends", {})
             key_metrics = module_data.get("key_metrics", {})
             
-            # Add prefix based on module
-            prefix = ""
-            if module_id == "borrowings":
-                prefix = "b_"
-            elif module_id == "liquidity":
-                prefix = "l_"
-            elif module_id == "quality_of_earnings":
-                prefix = "qoe_"
-            elif module_id == "asset_intangible_quality":
-                prefix = "aiqm_"
-            elif module_id == "working_capital":
-                prefix = "wc_"
-            elif module_id == "capex_cwip":
-                prefix = "capex_"
-            elif module_id == "equity_funding_mix":
-                prefix = "efm_"
+            prefix = MODULE_PREFIXES.get(module_id, f"{module_id}_")
             
-            # Process trends to extract per-year values
+            # Process each trend
             for metric_name, metric_data in trends.items():
-                if isinstance(metric_data, dict) and "values" in metric_data:
-                    values = metric_data["values"]
-                    # Map Y, Y-1, Y-2, etc. to actual years
-                    year_offset = 0
-                    for year_label in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]:
-                        if year_label in values:
-                            actual_year = str(year - year_offset)
-                            if actual_year not in years_data:
-                                years_data[actual_year] = {}
-                            
-                            field_name = f"{prefix}{metric_name}"
-                            years_data[actual_year][field_name] = values[year_label]
-                        year_offset += 1
+                if isinstance(metric_data, dict):
+                    extract_year_values(metric_data, prefix, metric_name, year)
             
-            # Add current year key_metrics
+            # Add current year key_metrics (only if not already set from trends)
             current_year_str = str(year)
             if current_year_str not in years_data:
                 years_data[current_year_str] = {}
             
             for metric_name, value in key_metrics.items():
-                if metric_name != "year":  # Skip year field
-                    field_name = f"{prefix}{metric_name}"
+                if metric_name == "year":
+                    continue
+                field_name = f"{prefix}{metric_name}"
+                if field_name not in years_data[current_year_str]:
                     years_data[current_year_str][field_name] = value
 
         return {

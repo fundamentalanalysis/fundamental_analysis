@@ -96,11 +96,21 @@ class ModuleOutput(BaseModel):
 
     def to_metrics_trends_dict(self) -> Dict[str, Any]:
         """Return only key_metrics + trends (no rules engine outputs)."""
+        # Serialize TrendDetail objects to dicts
+        serialized_trends = {}
+        for key, value in self.trends.items():
+            if hasattr(value, 'model_dump'):
+                serialized_trends[key] = value.model_dump()
+            elif hasattr(value, 'dict'):
+                serialized_trends[key] = value.dict()
+            else:
+                serialized_trends[key] = value
+        
         return {
             "module": self.module,
             "company": self.company,
             "key_metrics": self.key_metrics,
-            "trends": self.trends,
+            "trends": serialized_trends,
         }
 
 

@@ -262,8 +262,8 @@ class AnalysisWorkflow:
         """Initialize the workflow"""
         self.config = config or WorkflowConfig()
         self.agents_config = load_agents_config()
-        # self.available_modules = list(self.agents_config.get("modules", {}).keys())
-        self.available_modules = ["borrowings", "quality_of_earnings", "liquidity", "asset_intangible_quality"]
+        self.available_modules = list(self.agents_config.get("modules", {}).keys())
+        # self.available_modules = ["borrowings", "quality_of_earnings", "liquidity", "asset_intangible_quality"]
         self.graph = None
         self.checkpointer = MemorySaver() if self.config.enable_checkpoints else None
         
