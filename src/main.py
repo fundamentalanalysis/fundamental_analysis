@@ -715,6 +715,49 @@ def analyze_flat(req: AnalyzeRequest):
 
         module_results = result.get("module_results", {})
         
+        # Define allowed fields per module
+        ALLOWED_METRICS = {
+            "borrowings": ["total_debt", "st_debt_share", "debt_to_equity", "debt_to_ebitda", "interest_coverage", 
+                          "debt_lt_1y_pct", "debt_1_3y_pct", "debt_gt_3y_pct", "floating_share", "wacd", 
+                          "ocf_to_debt", "debt_cagr", "ebitda_cagr", "finance_cost_cagr"],
+            "liquidity": ["cash", "marketable_securities", "current_ratio", "quick_ratio", 
+                         "defensive_interval_ratio_days", "cash_ratio", "ocf_to_cl", "ocf_to_total_debt",
+                         "interest_coverage_ocf", "cash_coverage_st_debt", "current_ratio_yoy_latest",
+                         "cash_yoy_latest", "ocf_yoy_latest"],
+            "quality_of_earnings": ["qoe", "accruals_ratio", "operating_cash_flow", "net_income", 
+                                   "revenue_quality", "dso", "other_income_ratio"],
+            "asset_intangible_quality": ["asset_turnover", "asset_age_proxy", "intangible_pct_total",
+                                        "intangible_growth", "amortization_ratio", "r_and_d_ratio",
+                                        "revenue", "intangibles"],
+            "capex_cwip": ["capex_intensity", "cwip_pct", "asset_turnover", "debt_funded_capex",
+                          "fcf_coverage", "capex_cagr", "cwip_cagr", "nfa_cagr", "revenue_cagr"],
+            "equity_funding_mix": ["share_capital", "reserves_and_surplus", "net_worth", "pat",
+                                  "dividends_paid", "payout_ratio", "dividend_to_fcf", "roe",
+                                  "retained_earnings", "dilution_pct", "debt_to_equity",
+                                  "equity_cagr", "debt_cagr", "retained_cagr", "roe_cagr"],
+            "risk_scenario_detection": ["interest_coverage_cash", "interest_coverage_ebit", 
+                                       "net_debt", "cash_flow_deficit"],
+            "leverage_financial_risk": [],  # No specific metrics needed
+            "working_capital": [],  # Not in user's list
+        }
+        
+        ALLOWED_TRENDS = {
+            "borrowings": ["short_term_debt", "long_term_debt", "finance_cost"],
+            "liquidity": ["cash_and_equivalents", "receivables", "inventory", "operating_cash_flow",
+                         "current_liabilities", "current_ratio"],
+            "quality_of_earnings": ["qoe", "accruals_ratio", "ocf", "net_income", "ocf_revenue_ratio",
+                                   "dso", "receivables_vs_revenue"],
+            "asset_intangible_quality": ["asset_turnover", "asset_age_proxy", "intangible_assets",
+                                        "cwip", "capitalization", "cwip_vs_capitalization", "revenue", "cagr"],
+            "capex_cwip": ["capex", "cwip", "nfa"],
+            "equity_funding_mix": ["retained_earnings", "payout_ratio", "roe", 
+                                  "equity_growth_rate", "debt_growth_rate"],
+            "risk_scenario_detection": ["zombie_company", "window_dressing", "asset_stripping",
+                                       "loan_evergreening", "circular_trading"],
+            "leverage_financial_risk": [],  # Not in user's list
+            "working_capital": [],  # Not in user's list
+        }
+        
         # Build flattened per-year structure - separate metrics and trends
         metrics_data = {}  # Only for current year
         trends_data = {}   # For all years
@@ -725,13 +768,16 @@ def analyze_flat(req: AnalyzeRequest):
                 trends_data[actual_year] = {}
             trends_data[actual_year][field_name] = value
         
-        def extract_year_values(data_dict, metric_path, base_year):
+        def extract_year_values(data_dict, metric_path, base_year, allowed_trends):
             """
             Recursively extract year-based values (Y, Y-1, etc.) from any structure.
-            Works for both simple and nested trend structures.
+            Only extracts if the root trend name is in allowed_trends.
             """
             if not isinstance(data_dict, dict):
                 return
+            
+            # Get the root trend name (first part before underscore)
+            root_trend = metric_path.split("_")[0] if "_" in metric_path else metric_path
             
             # Check if this dict directly contains Y, Y-1 keys (it IS the values dict)
             if any(k in data_dict for k in ["Y", "Y-1", "Y-2", "Y-3", "Y-4"]):
@@ -763,7 +809,7 @@ def analyze_flat(req: AnalyzeRequest):
                     # Nested structure inside values - recurse into each
                     for nested_key, nested_val in values.items():
                         new_path = f"{metric_path}_{nested_key}" if metric_path else nested_key
-                        extract_year_values(nested_val, new_path, base_year)
+                        extract_year_values(nested_val, new_path, base_year, allowed_trends)
                 return
             
             # Otherwise, recurse into nested dicts (skip insight, comparison, status)
@@ -772,31 +818,30 @@ def analyze_flat(req: AnalyzeRequest):
                     continue
                 if isinstance(value, dict):
                     new_path = f"{metric_path}_{key}" if metric_path else key
-                    extract_year_values(value, new_path, base_year)
+                    extract_year_values(value, new_path, base_year, allowed_trends)
         
-        # Extract trend values for each year from all modules
+        # Extract trend values for each year from allowed modules
         for module_id, module_data in module_results.items():
             trends = module_data.get("trends", {})
             key_metrics = module_data.get("key_metrics", {})
             
-            # Process each trend - goes into trends_data (no prefix)
-            for metric_name, metric_data in trends.items():
-                if isinstance(metric_data, dict):
-                    extract_year_values(metric_data, metric_name, year)
+            allowed_trends = ALLOWED_TRENDS.get(module_id, [])
+            allowed_metrics = ALLOWED_METRICS.get(module_id, [])
             
-            # Add current year key_metrics to metrics_data (no prefix)
-            # Skip if already exists in trends for the current year
+            # Process each allowed trend
+            for metric_name, metric_data in trends.items():
+                if metric_name in allowed_trends and isinstance(metric_data, dict):
+                    extract_year_values(metric_data, metric_name, year, allowed_trends)
+            
+            # Add current year allowed key_metrics
             current_year_str = str(year)
             if current_year_str not in metrics_data:
                 metrics_data[current_year_str] = {}
             
-            trends_for_current_year = trends_data.get(current_year_str, {})
-            
             for metric_name, value in key_metrics.items():
                 if metric_name == "year":
                     continue
-                # Only add to metrics if not already in trends
-                if metric_name not in trends_for_current_year:
+                if metric_name in allowed_metrics:
                     metrics_data[current_year_str][metric_name] = value
 
         return {
