@@ -715,8 +715,9 @@ def analyze_flat(req: AnalyzeRequest):
 
         module_results = result.get("module_results", {})
         
-        # Build flattened per-year structure
-        years_data = {}
+        # Build flattened per-year structure - separate metrics and trends
+        metrics_data = {}  # Only for current year
+        trends_data = {}   # For all years
         
         # Define module prefixes
         MODULE_PREFIXES = {
@@ -731,11 +732,11 @@ def analyze_flat(req: AnalyzeRequest):
             "leverage_financial_risk": "lfr_",
         }
         
-        def add_to_year(actual_year, field_name, value):
-            """Add a field to a specific year's data"""
-            if actual_year not in years_data:
-                years_data[actual_year] = {}
-            years_data[actual_year][field_name] = value
+        def add_to_trends(actual_year, field_name, value):
+            """Add a field to a specific year's trends"""
+            if actual_year not in trends_data:
+                trends_data[actual_year] = {}
+            trends_data[actual_year][field_name] = value
         
         def extract_year_values(data_dict, prefix, metric_path, base_year):
             """
@@ -751,7 +752,7 @@ def analyze_flat(req: AnalyzeRequest):
                     if year_label in data_dict and data_dict[year_label] is not None:
                         year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
                         actual_year = str(base_year - year_offset)
-                        add_to_year(actual_year, f"{prefix}{metric_path}", data_dict[year_label])
+                        add_to_trends(actual_year, f"{prefix}{metric_path}", data_dict[year_label])
                 return
             
             # Check if this dict has a "values" key
@@ -765,12 +766,12 @@ def analyze_flat(req: AnalyzeRequest):
                         if year_label in values and values[year_label] is not None:
                             year_offset = 0 if year_label == "Y" else int(year_label.split("-")[1])
                             actual_year = str(base_year - year_offset)
-                            add_to_year(actual_year, f"{prefix}{metric_path}", values[year_label])
+                            add_to_trends(actual_year, f"{prefix}{metric_path}", values[year_label])
                             
                             # Add YoY growth if available
                             yoy_key = "Y_vs_Y-1" if year_label == "Y" else f"Y-{year_offset}_vs_Y-{year_offset + 1}"
                             if yoy_key in yoy_growth:
-                                add_to_year(actual_year, f"{prefix}{metric_path}_yoy", yoy_growth[yoy_key])
+                                add_to_trends(actual_year, f"{prefix}{metric_path}_yoy", yoy_growth[yoy_key])
                 else:
                     # Nested structure inside values - recurse into each
                     for nested_key, nested_val in values.items():
@@ -793,26 +794,26 @@ def analyze_flat(req: AnalyzeRequest):
             
             prefix = MODULE_PREFIXES.get(module_id, f"{module_id}_")
             
-            # Process each trend
+            # Process each trend - goes into trends_data
             for metric_name, metric_data in trends.items():
                 if isinstance(metric_data, dict):
                     extract_year_values(metric_data, prefix, metric_name, year)
             
-            # Add current year key_metrics (only if not already set from trends)
+            # Add current year key_metrics to metrics_data
             current_year_str = str(year)
-            if current_year_str not in years_data:
-                years_data[current_year_str] = {}
+            if current_year_str not in metrics_data:
+                metrics_data[current_year_str] = {}
             
             for metric_name, value in key_metrics.items():
                 if metric_name == "year":
                     continue
                 field_name = f"{prefix}{metric_name}"
-                if field_name not in years_data[current_year_str]:
-                    years_data[current_year_str][field_name] = value
+                metrics_data[current_year_str][field_name] = value
 
         return {
             "company": company,
-            "years": years_data
+            "metrics": metrics_data,
+            "trends": trends_data
         }
         
     except Exception as e:
