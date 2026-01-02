@@ -908,7 +908,7 @@ modules:
   # 9. LEVERAGE & FINANCIAL RISK MODULE
   leverage_financial_risk:
     enabled: true
-    name: "Leverage & Financial Risk"
+    name: "LeverageFinancialRisk"
     description: "Leverage ratios + Fitch/S&P-style FFO coverage and debt service burden trends"
     agent_prompt: |
       You are a senior credit analyst.
@@ -938,7 +938,7 @@ modules:
       total_debt: "round((borrowings or (short_term_debt + long_term_debt + (lease_liabilities or 0))) or 0, 2)"
       short_term_debt: "round((short_term_debt or 0), 2)"
       cash: "round((cash_equivalents or cash_and_equivalents or 0), 2)"
-      equity: "round((total_equity or equity or 0), 2)"
+      equity: "round(((share_capital or equity_capital or 0) + (reserves or reserves_and_surplus or 0)) or (total_equity or equity or 0), 2)"
       ebit: "round((operating_profit or ebit or 0), 2)"
       ebitda: "round(((operating_profit or ebit or 0) + (depreciation or 0)), 2)"
       interest_cost: "round((interest or finance_cost or 0), 2)"

@@ -756,8 +756,7 @@ def analyze_flat(req: AnalyzeRequest):
                                   "equity_growth_rate", "debt_growth_rate"],
             "risk_scenario_detection": ["zombie_company", "window_dressing", "asset_stripping",
                                        "loan_evergreening", "circular_trading"],
-            "leverage_financial_risk": ["basic leverage metrics", "advanced fitch / s&p style metrics", 
-                                        "short-term debt dependence"],
+            "leverage_financial_risk": ["basic leverage metrics", "short-term debt dependence"],
             "working_capital": ["trade_receivables", "inventory", "trade_payables", "revenue"],
         }
         

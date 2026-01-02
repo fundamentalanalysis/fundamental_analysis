@@ -1252,9 +1252,14 @@ Keep the analysis concise but insightful.
                 cash = d.get("cash_and_equivalents")
             cash = cash or 0
 
-            equity = d.get("equity")
+            # Use net_worth (share_capital + reserves) for equity, fallback to total_equity/equity
+            equity = d.get("net_worth")
             if equity is None:
-                equity = d.get("total_equity")
+                share_capital = d.get("share_capital") or d.get("equity_capital") or 0
+                reserves = d.get("reserves") or d.get("reserves_and_surplus") or 0
+                equity = share_capital + reserves
+            if not equity:
+                equity = d.get("total_equity") or d.get("equity") or 0
             equity = equity or 0
 
             ebit = d.get("operating_profit")
@@ -1345,54 +1350,26 @@ Keep the analysis concise but insightful.
                 "debt_to_equity": {
                     "total_debt": {"values": _build_values("total_debt")},
                     "equity": {"values": _build_values("equity")},
-                    "debt to equity": {"values": de_ratio},
+                    "debt_to_equity": {"values": de_ratio},
                     "insight": _generate_trend_insight(de_ratio, "Debt-to-Equity"),
                 },
                 "debt_to_ebitda": {
                     "total_debt": {"values": _build_values("total_debt")},
                     "ebitda": {"values": _build_values("ebitda")},
-                    "debt to ebitda": {"values": debt_ebitda},
+                    "debt_to_ebitda": {"values": debt_ebitda},
                     "insight": _generate_trend_insight(debt_ebitda, "Debt-to-EBITDA"),
                 },
-                "interest_coverage": {
+                "interest_coverage_ratio": {
                     "ebit": {"values": _build_values("ebit")},
                     "interest_cost": {"values": _build_values("interest_cost")},
-                    "interest coverage ratio": {"values": interest_cov},
+                    "interest_coverage_ratio": {"values": interest_cov},
                     "insight": _generate_trend_insight(interest_cov, "Interest Coverage"),
-                },
-            },
-            "advanced fitch / s&p style metrics": {
-                "net_debt": {
-                    "total_debt": {"values": _build_values("total_debt")},
-                    "cash": {"values": _build_values("cash")},
-                    "net debt": {"values": net_debt},
-                    "insight": _generate_trend_insight(net_debt, "Net Debt"),
-                },
-                "net_debt_to_ebitda": {
-                    "net_debt": {"values": _build_values("net_debt")},
-                    "ebitda": {"values": _build_values("ebitda")},
-                    "net debt to ebitda": {"values": net_debt_ebitda},
-                    "insight": _generate_trend_insight(net_debt_ebitda, "Net Debt-to-EBITDA"),
-                },
-                "ffo_coverage": {
-                    "ebitda": {"values": _build_values("ebitda")},
-                    "interest_cost": {"values": _build_values("interest_cost")},
-                    "taxes": {"values": _build_values("taxes")},
-                    "ffo": {"values": _build_values("ffo")},
-                    "ffo coverage": {"values": ffo_cov},
-                    "insight": _generate_trend_insight(ffo_cov, "FFO Coverage"),
-                },
-                "debt_service_burden": {
-                    "short_term_debt": {"values": _build_values("short_term_debt")},
-                    "total_debt": {"values": _build_values("total_debt")},
-                    "debt service burden": {"values": st_ratio},
-                    "insight": _generate_trend_insight(st_ratio, "Debt Service Burden"),
                 },
             },
             "short-term debt dependence": {
                 "short_term_debt": {"values": _build_values("short_term_debt")},
                 "total_debt": {"values": _build_values("total_debt")},
-                "st debt share": {"values": st_ratio},
+                "st_debt_share": {"values": st_ratio},
                 "insight": _generate_trend_insight(st_ratio, "Short-Term Debt Dependence"),
             },
         }
