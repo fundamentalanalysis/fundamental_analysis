@@ -955,7 +955,64 @@ modules:
       ffo_coverage: "round(safe_div(((((operating_profit or ebit or 0) + (depreciation or 0)) - (interest or finance_cost or 0) - (((profit_before_tax or 0) * parse_tax_rate(tax))))), (interest or finance_cost or 0)) or 0, 6)"
 
     # Explicitly disable default per-metric detailed trends for this module.
-    # It uses a special nested trends block to match the reference structure.
+    # Instead, use nested_trends for grouped structure.
     detailed_trend_fields: {}
-    detailed_special_trends: [leverage_financial_risk]
+
+    # Input fields needed for equity calculation (share_capital + reserves)
+    input_fields:
+      - year
+      - borrowings
+      - short_term_debt
+      - long_term_debt
+      - lease_liabilities
+      - cash_equivalents
+      - cash_and_equivalents
+      - total_equity
+      - equity
+      - share_capital
+      - equity_capital
+      - reserves
+      - reserves_and_surplus
+      - net_worth
+      - operating_profit
+      - ebit
+      - depreciation
+      - interest
+      - finance_cost
+      - profit_before_tax
+      - tax
+
+    # YAML-driven nested trends structure
+    # Each group contains sub-metrics with components and a ratio
+    nested_trends:
+      "basic leverage metrics":
+        debt_to_equity:
+          components:
+            total_debt: "total_debt"
+            equity: "equity"
+          ratio: "de_ratio"
+          ratio_key: "debt_to_equity"
+          insight_metric: "Debt-to-Equity"
+        debt_to_ebitda:
+          components:
+            total_debt: "total_debt"
+            ebitda: "ebitda"
+          ratio: "debt_ebitda"
+          ratio_key: "debt_to_ebitda"
+          insight_metric: "Debt-to-EBITDA"
+        interest_coverage_ratio:
+          components:
+            ebit: "ebit"
+            interest_cost: "interest_cost"
+          ratio: "interest_coverage"
+          ratio_key: "interest_coverage_ratio"
+          insight_metric: "Interest Coverage"
+      "short-term debt dependence":
+        _flat: true
+        components:
+          short_term_debt: "short_term_debt"
+          total_debt: "total_debt"
+        ratio: "st_debt_ratio"
+        ratio_key: "st_debt_share"
+        insight_metric: "Short-Term Debt Dependence"
 

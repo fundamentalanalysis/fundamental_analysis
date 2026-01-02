@@ -156,7 +156,7 @@ class GenericAgent:
             "aiqm_capitalization": self._special_trend_aiqm_capitalization,
             "aiqm_cwip_vs_capitalization": self._special_trend_aiqm_cwip_vs_capitalization,
             "risk_scenarios": self._special_trend_risk_scenarios,
-            "leverage_financial_risk": self._special_trend_leverage_financial_risk,
+            # leverage_financial_risk now uses nested_trends YAML config instead
         }
 
     # -----------------------------------------------------------------------
@@ -1109,6 +1109,15 @@ Keep the analysis concise but insightful.
                     insight=insight,
                 )
 
+        # YAML-driven nested trends (e.g., leverage_financial_risk grouped structure)
+        nested_trends_config = self.config.get("nested_trends", {})
+        if nested_trends_config:
+            try:
+                detailed_trends.update(self._calculate_nested_trends(historical_data))
+            except Exception:
+                # Nested trends should never crash the module output.
+                pass
+
         # Optional nested / special trends (YAML-driven; code-dispatched via registry)
         detailed_special_trends = self.config.get("detailed_special_trends", []) or []
         for trend_name in detailed_special_trends:
@@ -1204,12 +1213,13 @@ Keep the analysis concise but insightful.
     def _special_trend_risk_scenarios(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         return self._calculate_risk_scenarios(historical_data)
 
-    def _special_trend_leverage_financial_risk(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
-        return self._calculate_leverage_financial_risk_trends(historical_data)
-
-    def _calculate_leverage_financial_risk_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
-        """Nested leverage trend block matching the provided lfr_trends.py structure."""
-        if not historical_data:
+    def _calculate_nested_trends(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
+        """
+        Generic YAML-driven nested trends calculation.
+        Reads from nested_trends config and builds grouped trend structures.
+        """
+        nested_config = self.config.get("nested_trends", {})
+        if not nested_config or not historical_data:
             return {}
 
         def parse_tax_rate(tax_value: Any) -> float:
@@ -1234,25 +1244,27 @@ Keep the analysis concise but insightful.
                 return (v / 100.0) if v > 1 else v
             return 0.0
 
-        # Build per-year canonical metrics
+        # Build per-year metrics from historical data
         per_year: Dict[int, Dict[str, Any]] = {}
         for d in historical_data:
             year = d.get("year")
             if year is None:
                 continue
 
+            # Calculate base values with fallbacks
             total_debt = d.get("borrowings")
             if total_debt is None:
                 total_debt = (d.get("short_term_debt") or 0) + (d.get("long_term_debt") or 0) + (d.get("lease_liabilities") or 0)
             total_debt = total_debt or 0
 
             short_term_debt = d.get("short_term_debt") or 0
+            
             cash = d.get("cash_equivalents")
             if cash is None:
                 cash = d.get("cash_and_equivalents")
             cash = cash or 0
 
-            # Use net_worth (share_capital + reserves) for equity, fallback to total_equity/equity
+            # Use net_worth (share_capital + reserves) for equity
             equity = d.get("net_worth")
             if equity is None:
                 share_capital = d.get("share_capital") or d.get("equity_capital") or 0
@@ -1282,6 +1294,7 @@ Keep the analysis concise but insightful.
             net_debt = total_debt - cash
             ffo = ebitda - interest_cost - tax_amount
 
+            # Calculate all ratios
             de_ratio = (total_debt / equity) if equity else 0.0
             debt_ebitda = (total_debt / ebitda) if ebitda else 0.0
             net_debt_ebitda = (net_debt / ebitda) if ebitda else 0.0
@@ -1329,50 +1342,60 @@ Keep the analysis concise but insightful.
             latest = series[0]
             oldest = series[-1]
             if latest < oldest:
-                return f"{metric_name} has improved over the past five years, indicating strengthening financial profile."
+                return f"{metric_name} has improved over the past five years."
             if latest > oldest:
-                return f"{metric_name} has increased over the past five years, indicating rising leverage or risk."
+                return f"{metric_name} has increased over the past five years."
             return f"{metric_name} has remained broadly stable over the period."
 
-        # BASIC
-        de_ratio = _build_values("de_ratio")
-        debt_ebitda = _build_values("debt_ebitda")
-        interest_cov = _build_values("interest_coverage")
+        # Build output from nested_trends config
+        result: Dict[str, Any] = {}
 
-        # ADVANCED
-        net_debt = _build_values("net_debt")
-        net_debt_ebitda = _build_values("net_debt_ebitda")
-        ffo_cov = _build_values("ffo_coverage")
-        st_ratio = _build_values("st_debt_ratio")
+        for group_name, group_config in nested_config.items():
+            is_flat = group_config.get("_flat", False)
 
-        return {
-            "basic leverage metrics": {
-                "debt_to_equity": {
-                    "total_debt": {"values": _build_values("total_debt")},
-                    "equity": {"values": _build_values("equity")},
-                    "debt_to_equity": {"values": de_ratio},
-                    "insight": _generate_trend_insight(de_ratio, "Debt-to-Equity"),
-                },
-                "debt_to_ebitda": {
-                    "total_debt": {"values": _build_values("total_debt")},
-                    "ebitda": {"values": _build_values("ebitda")},
-                    "debt_to_ebitda": {"values": debt_ebitda},
-                    "insight": _generate_trend_insight(debt_ebitda, "Debt-to-EBITDA"),
-                },
-                "interest_coverage_ratio": {
-                    "ebit": {"values": _build_values("ebit")},
-                    "interest_cost": {"values": _build_values("interest_cost")},
-                    "interest_coverage_ratio": {"values": interest_cov},
-                    "insight": _generate_trend_insight(interest_cov, "Interest Coverage"),
-                },
-            },
-            "short-term debt dependence": {
-                "short_term_debt": {"values": _build_values("short_term_debt")},
-                "total_debt": {"values": _build_values("total_debt")},
-                "st_debt_share": {"values": st_ratio},
-                "insight": _generate_trend_insight(st_ratio, "Short-Term Debt Dependence"),
-            },
-        }
+            if is_flat:
+                # Flat group - components and ratio at group level
+                components = group_config.get("components", {})
+                ratio_field = group_config.get("ratio", "")
+                ratio_key = group_config.get("ratio_key", ratio_field)
+                insight_metric = group_config.get("insight_metric", group_name)
+
+                group_output: Dict[str, Any] = {}
+                for comp_key, comp_field in components.items():
+                    group_output[comp_key] = {"values": _build_values(comp_field)}
+
+                ratio_values = _build_values(ratio_field)
+                group_output[ratio_key] = {"values": ratio_values}
+                group_output["insight"] = _generate_trend_insight(ratio_values, insight_metric)
+
+                result[group_name] = group_output
+
+            else:
+                # Nested group - contains sub-metrics
+                group_output = {}
+                for sub_metric_name, sub_config in group_config.items():
+                    if sub_metric_name.startswith("_"):
+                        continue
+
+                    components = sub_config.get("components", {})
+                    ratio_field = sub_config.get("ratio", "")
+                    ratio_key = sub_config.get("ratio_key", ratio_field)
+                    insight_metric = sub_config.get("insight_metric", sub_metric_name)
+
+                    sub_output: Dict[str, Any] = {}
+                    for comp_key, comp_field in components.items():
+                        sub_output[comp_key] = {"values": _build_values(comp_field)}
+
+                    ratio_values = _build_values(ratio_field)
+                    sub_output[ratio_key] = {"values": ratio_values}
+                    sub_output["insight"] = _generate_trend_insight(ratio_values, insight_metric)
+
+                    group_output[sub_metric_name] = sub_output
+
+                result[group_name] = group_output
+
+        return result
+
 
     def _calculate_risk_scenarios(self, historical_data: List[Dict[str, float]]) -> Dict[str, Any]:
         """Compute risk scenario detection output from 5Y historical data.
