@@ -58,22 +58,23 @@ RETURN STRICT JSON ONLY in the format below:
 def run_lfr_llm_agent(company, key_metrics, trends, rules):
     prompt = build_lfr_prompt(company, key_metrics, trends, rules)
 
-    response = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a conservative credit rating analyst."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.2,
-    )
+    # response = client.chat.completions.create(
+    #     model=LLM_MODEL,
+    #     messages=[
+    #         {
+    #             "role": "system",
+    #             "content": "You are a conservative credit rating analyst."
+    #         },
+    #         {
+    #             "role": "user",
+    #             "content": prompt
+    #         }
+    #     ],
+    #     temperature=0.2,
+    # )
 
-    content = response.choices[0].message.content.strip()
+    # content = response.choices[0].message.content.strip()
+    content = " "
 
     try:
         return json.loads(content)
